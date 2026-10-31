@@ -44,9 +44,9 @@ async def get_current_user(
     settings: Annotated[Settings, Depends(get_settings)],
     token: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
 ) -> User:
-    user_id = read_session_token(token, settings.session_secret) if token else None
-    user = await session.get(User, user_id) if user_id else None
-    if user is None:
+    claims = read_session_token(token, settings.session_secret) if token else None
+    user = await session.get(User, claims.user_id) if claims else None
+    if user is None or user.session_version != claims.version:
         raise AppError(401, "not_authenticated", "Please log in.")
     return user
 

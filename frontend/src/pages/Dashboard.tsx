@@ -27,6 +27,7 @@ export function Dashboard({ navigate }: { navigate: (path: string) => void }) {
   }
 
   async function removeConversation(id: string) {
+    if (!window.confirm('Delete this conversation and its audio? This cannot be undone.')) return
     try {
       await api.deleteConversation(id)
       setConversations((current) => current?.filter((c) => c.id !== id) ?? null)

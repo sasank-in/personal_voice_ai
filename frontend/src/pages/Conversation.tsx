@@ -82,7 +82,8 @@ export function ConversationPage({ conversationId }: { conversationId: string })
       setDraft('')
     } catch (caught) {
       setPhase('idle')
-      setFailure({ message: describe(caught), retry: () => sendText(content) })
+      const retry = caught instanceof ApiError && caught.retryable ? () => sendText(content) : undefined
+      setFailure({ message: describe(caught), retry })
     }
   }
 

@@ -1,9 +1,14 @@
+import logging
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.services.providers.base import ProviderError
 from app.utils.audio import InvalidAudioError
+
+logger = logging.getLogger(__name__)
 
 
 class AppError(Exception):
@@ -69,6 +74,19 @@ def register_error_handlers(app: FastAPI) -> None:
         return JSONResponse(
             error_body("invalid_audio", f"{exc} Please record again.", "uploading"),
             status_code=400,
+        )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def handle_http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
+        code = {404: "not_found", 405: "method_not_allowed"}.get(exc.status_code, "http_error")
+        return JSONResponse(error_body(code, str(exc.detail)), status_code=exc.status_code)
+
+    @app.exception_handler(Exception)
+    async def handle_unexpected(request: Request, exc: Exception) -> JSONResponse:
+        logger.exception("Unhandled error on %s %s", request.method, request.url.path, exc_info=exc)
+        return JSONResponse(
+            error_body("internal_error", "Something went wrong. Please try again.", retryable=True),
+            status_code=500,
         )
 
     @app.exception_handler(RequestValidationError)

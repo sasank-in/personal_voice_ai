@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { type FormEvent, useEffect, useState } from 'react'
 import { ApiError, api } from '../services/api'
 import { pickVoice, saveSelectedVoice } from '../services/selectedVoice'
 import type { Languages, User, VoiceProfile } from '../types'
@@ -12,6 +12,8 @@ export function Settings({ user, onUserChange }: Props) {
   const [languages, setLanguages] = useState<Languages>({})
   const [voices, setVoices] = useState<VoiceProfile[]>([])
   const [selected, setSelected] = useState<string | null>(null)
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
   const [notice, setNotice] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
@@ -55,6 +57,19 @@ export function Settings({ user, onUserChange }: Props) {
       setVoices(remaining)
       setSelected(pickVoice(remaining)?.id ?? null)
       setNotice('Voice profile deleted.')
+    } catch (caught) {
+      fail(caught)
+    }
+  }
+
+  async function changePassword(event: FormEvent) {
+    event.preventDefault()
+    setError(null)
+    try {
+      await api.changePassword(currentPassword, newPassword)
+      setCurrentPassword('')
+      setNewPassword('')
+      setNotice('Password changed.')
     } catch (caught) {
       fail(caught)
     }
@@ -110,6 +125,36 @@ export function Settings({ user, onUserChange }: Props) {
           ))}
         </ul>
       </section>
+
+      <form className="card stack" onSubmit={changePassword}>
+        <h2>Change password</h2>
+        <p className="hint">This logs you out everywhere else.</p>
+        <label className="field">
+          Current password
+          <input
+            type="password"
+            autoComplete="current-password"
+            required
+            value={currentPassword}
+            onChange={(event) => setCurrentPassword(event.target.value)}
+          />
+        </label>
+        <label className="field">
+          New password (at least 8 characters)
+          <input
+            type="password"
+            autoComplete="new-password"
+            required
+            minLength={8}
+            maxLength={1024}
+            value={newPassword}
+            onChange={(event) => setNewPassword(event.target.value)}
+          />
+        </label>
+        <div>
+          <button type="submit" className="button">Change password</button>
+        </div>
+      </form>
 
       <section className="card stack">
         <h2>Audio retention</h2>

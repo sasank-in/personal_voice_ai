@@ -5,8 +5,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class LoginRequest(BaseModel):
-    email: str
-    password: str
+    # The maximum keeps a huge password from tying up the deliberately slow hash.
+    email: str = Field(max_length=320)
+    password: str = Field(max_length=1024)
+
+
+class PasswordChange(BaseModel):
+    current_password: str = Field(max_length=1024)
+    new_password: str = Field(min_length=8, max_length=1024)
 
 
 class UserOut(BaseModel):

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { pauseAllAudio } from '../services/audioPlayback'
 
 export type RecorderStatus = 'idle' | 'requesting' | 'recording'
 
@@ -23,6 +24,7 @@ export function useRecorder(maxSeconds: number, onComplete: (recording: Blob) =>
   const streamRef = useRef<MediaStream | null>(null)
   const timerRef = useRef<number | null>(null)
   const discardRef = useRef(false)
+  const unmountedRef = useRef(false)
   const onCompleteRef = useRef(onComplete)
 
   useEffect(() => {
@@ -47,7 +49,13 @@ export function useRecorder(maxSeconds: number, onComplete: (recording: Blob) =>
     try {
       // Permission is requested here, only after the user presses record.
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+      if (unmountedRef.current) {
+        // The user left the page while the permission prompt was open: turn the microphone off.
+        stream.getTracks().forEach((track) => track.stop())
+        return
+      }
       streamRef.current = stream
+      pauseAllAudio()
       const mimeType = MIME_TYPES.find((type) => MediaRecorder.isTypeSupported(type))
       const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
       const chunks: Blob[] = []
@@ -79,14 +87,15 @@ export function useRecorder(maxSeconds: number, onComplete: (recording: Blob) =>
     }
   }, [maxSeconds, release, stop])
 
-  useEffect(
-    () => () => {
+  useEffect(() => {
+    unmountedRef.current = false
+    return () => {
+      unmountedRef.current = true
       discardRef.current = true
       stop()
       release()
-    },
-    [release, stop],
-  )
+    }
+  }, [release, stop])
 
   return { status, elapsed, error, start, stop }
 }

@@ -27,6 +27,13 @@ def map_error(exc: Exception, stage: str, failure_code: str, failure_message: st
 
     status = exc.status_code
     body = str(exc.body)
+    if status == 400 and "Voice not found" in body:
+        return ProviderError(
+            "voice_not_found",
+            "This voice no longer exists at Sarvam. Delete this profile and create it again.",
+            stage=stage,
+            status_code=status,
+        )
     if status == 403 and "TIER_LIMIT_REACHED" in body:
         return ProviderError(
             "voice_limit_reached", "The saved voice limit has been reached.", stage=stage, status_code=status

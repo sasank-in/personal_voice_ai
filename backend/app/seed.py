@@ -17,6 +17,7 @@ from app.models import User
 
 
 async def upsert_user(email: str, password: str) -> bool:
+    email = email.strip().lower()
     async with SessionLocal() as session:
         user = await session.scalar(select(User).where(User.email == email))
         created = user is None
@@ -25,6 +26,7 @@ async def upsert_user(email: str, password: str) -> bool:
             session.add(user)
         else:
             user.password_hash = hash_password(password)
+            user.session_version += 1
         await session.commit()
     await engine.dispose()
     return created

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { pauseAllAudio } from '../services/audioPlayback'
 
 interface Props {
   url: string
@@ -29,6 +30,8 @@ export function AudioPlayer({ url, autoPlay, onEnded }: Props) {
         src={url}
         controls
         preload="metadata"
+        onPlay={(event) => pauseAllAudio(event.currentTarget)}
+        onPause={onEnded}
         onEnded={onEnded}
         onError={() => {
           setFailed(true)

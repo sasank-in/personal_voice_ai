@@ -142,6 +142,7 @@ async def test_xai_uses_responses_without_server_side_storage():
     assert str(request.url) == "https://api.x.ai/v1/responses"
     sent = json.loads(request.content)
     assert sent["store"] is False
+    assert sent["max_output_tokens"] == 2048
     assert sent["instructions"] == "Be brief."
     assert sent["input"] == [{"role": "user", "content": "Hello"}]
 
@@ -154,7 +155,9 @@ async def test_groq_llm_uses_chat_completions_and_maps_errors():
     llm = OpenAICompatibleLLM("groq", "test-key", "https://api.groq.com/openai/v1", "m", 5)
     llm._client = openai_client(recorder, "https://api.groq.com/openai/v1")
     assert await llm.generate("Be brief.", [{"role": "user", "content": "Hi"}]) == "Hello"
-    assert json.loads(recorder.requests[0].content)["messages"][0]["role"] == "system"
+    sent = json.loads(recorder.requests[0].content)
+    assert sent["messages"][0]["role"] == "system"
+    assert sent["max_completion_tokens"] == 2048
 
     llm._client = openai_client(Recorder(401, {"error": {"message": "Bad key"}}), "https://api.groq.com/openai/v1")
     with pytest.raises(ProviderError) as error:

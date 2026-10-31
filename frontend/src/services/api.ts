@@ -9,7 +9,7 @@ import type {
 } from '../types'
 
 const BASE = '/api/v1'
-const TIMEOUT_MS = 120_000
+const TIMEOUT_MS = 180_000
 
 export class ApiError extends Error {
   readonly status: number
@@ -113,6 +113,11 @@ export const api = {
   me: () => request<User>('/me'),
   updateLanguage: (language: string) =>
     request<User>('/me', { method: 'PATCH', body: JSON.stringify({ language }) }),
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request<void>('/me/password', {
+      method: 'POST',
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    }),
   languages: () => request<Languages>('/languages'),
 
   listVoices: () => request<VoiceProfile[]>('/voices'),

@@ -72,6 +72,8 @@ python -m pytest
 
 Tests use fake providers and an in-memory database, so they call no paid APIs.
 
+To also run them on PostgreSQL, which enforces foreign keys, set `TEST_DATABASE_URL` to an empty, throwaway database first. The tests drop every table in it, so never point it at `voice_db`.
+
 ## Switch to xAI Grok
 
 In `.env`, set `LLM_PROVIDER=xai` and `XAI_API_KEY` to your xAI key. Each provider only ever receives its own key.

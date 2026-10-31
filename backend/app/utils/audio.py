@@ -3,11 +3,16 @@ import io
 import re
 import shutil
 import subprocess
+import tempfile
 import wave
+from pathlib import Path
 
 import imageio_ffmpeg
 
 STT_SAMPLE_RATE = 16000
+DEFAULT_MAX_DECODE_SECONDS = 300
+FFMPEG_TIMEOUT_SECONDS = 60
+ALLOWED_DEMUXERS = "wav,mp3,ogg,flac,aac,aiff,amr,asf,matroska,webm,mov,mp4,m4a,3gp,3g2,mj2"
 
 
 class InvalidAudioError(Exception):
@@ -18,56 +23,57 @@ def ffmpeg_executable() -> str:
     return shutil.which("ffmpeg") or imageio_ffmpeg.get_ffmpeg_exe()
 
 
-def _convert_to_wav(audio_bytes: bytes, sample_rate: int) -> bytes:
+def _convert_to_wav(audio_bytes: bytes, sample_rate: int, max_seconds: float) -> bytes:
     if not audio_bytes:
         raise InvalidAudioError("The recording is empty.")
-    # subprocess.run in a worker thread: asyncio subprocesses need the
+    # Files rather than pipes: formats such as phone m4a keep their index at the end of the
+    # file and need seeking. subprocess.run in a worker thread: asyncio subprocesses need the
     # Proactor event loop on Windows, which uvicorn's reload mode does not use.
-    result = subprocess.run(
-        [
-            ffmpeg_executable(),
-            "-hide_banner",
-            "-loglevel", "error",
-            "-i", "pipe:0",
-            "-vn",
-            "-ac", "1",
-            "-ar", str(sample_rate),
-            "-f", "wav",
-            "pipe:1",
-        ],
-        input=audio_bytes,
-        capture_output=True,
-        timeout=60,
-    )
-    if result.returncode != 0 or not result.stdout:
-        raise InvalidAudioError("The file could not be decoded as audio.")
-    return _rewrite_wav_header(result.stdout)
+    with tempfile.TemporaryDirectory(prefix="voice-ai-") as work:
+        source = Path(work) / "input"
+        target = Path(work) / "output.wav"
+        source.write_bytes(audio_bytes)
+        try:
+            result = subprocess.run(
+                [
+                    ffmpeg_executable(),
+                    "-hide_banner",
+                    "-nostdin",
+                    "-loglevel", "error",
+                    # Uploads are untrusted: no playlists or concat scripts that open other files.
+                    "-format_whitelist", ALLOWED_DEMUXERS,
+                    "-protocol_whitelist", "file",
+                    "-i", str(source),
+                    # Bounds memory and CPU for a small upload that decodes to hours of audio.
+                    "-t", str(max_seconds),
+                    "-vn",
+                    "-map_metadata", "-1",
+                    "-ac", "1",
+                    "-ar", str(sample_rate),
+                    "-f", "wav",
+                    str(target),
+                ],
+                capture_output=True,
+                timeout=FFMPEG_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise InvalidAudioError("The file took too long to process.") from exc
+        if result.returncode != 0 or not target.exists():
+            raise InvalidAudioError("The file could not be decoded as audio.")
+        wav = target.read_bytes()
 
-
-def _rewrite_wav_header(piped_wav: bytes) -> bytes:
-    # FFmpeg cannot seek on a pipe, so its header has placeholder sizes.
-    data_index = piped_wav.find(b"data")
-    if data_index < 0:
-        raise InvalidAudioError("The file could not be decoded as audio.")
-    fmt_index = piped_wav.find(b"fmt ")
-    channels = int.from_bytes(piped_wav[fmt_index + 10:fmt_index + 12], "little")
-    sample_rate = int.from_bytes(piped_wav[fmt_index + 12:fmt_index + 16], "little")
-    bits = int.from_bytes(piped_wav[fmt_index + 22:fmt_index + 24], "little")
-    frames = piped_wav[data_index + 8:]
-    if not frames:
+    if wav_duration_seconds(wav) == 0:
         raise InvalidAudioError("The recording contains no audio.")
-
-    output = io.BytesIO()
-    with wave.open(output, "wb") as writer:
-        writer.setnchannels(channels)
-        writer.setsampwidth(bits // 8)
-        writer.setframerate(sample_rate)
-        writer.writeframes(frames)
-    return output.getvalue()
+    return wav
 
 
-async def normalize_to_wav(audio_bytes: bytes, sample_rate: int = STT_SAMPLE_RATE) -> bytes:
-    return await asyncio.to_thread(_convert_to_wav, audio_bytes, sample_rate)
+async def normalize_to_wav(
+    audio_bytes: bytes,
+    sample_rate: int = STT_SAMPLE_RATE,
+    max_seconds: float = DEFAULT_MAX_DECODE_SECONDS,
+) -> bytes:
+    """Decode to mono WAV. Longer audio is cut at max_seconds, so set it above any length limit."""
+    return await asyncio.to_thread(_convert_to_wav, audio_bytes, sample_rate, max_seconds)
 
 
 def wav_duration_seconds(wav_bytes: bytes) -> float:
@@ -129,7 +135,8 @@ _MARKDOWN = [
     (re.compile(r"!?\[([^\]]*)\]\([^)]*\)"), r"\1"),
     (re.compile(r"^\s{0,3}#{1,6}\s*", re.MULTILINE), ""),
     (re.compile(r"^\s*[-*+]\s+", re.MULTILINE), ""),
-    (re.compile(r"(\*\*|__|\*|_)(?=\S)(.+?)(?<=\S)\1"), r"\2"),
+    # Only at word edges, so "2*3*4" and "snake_case_name" keep their symbols.
+    (re.compile(r"(?<![\w*])(\*\*|__|\*|_)(?=\S)(.+?)(?<=\S)\1(?![\w*])"), r"\2"),
 ]
 
 

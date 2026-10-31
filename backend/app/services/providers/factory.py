@@ -27,4 +27,5 @@ def build_llm(settings: Settings) -> OpenAICompatibleLLM:
         settings.resolved_llm_base_url,
         settings.resolved_llm_model,
         settings.provider_timeout_seconds,
+        settings.llm_max_output_tokens,
     )

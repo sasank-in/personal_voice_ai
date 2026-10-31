@@ -1,8 +1,9 @@
+import secrets
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy import URL
 
@@ -13,7 +14,7 @@ LLM_DEFAULTS = {
     "xai": ("https://api.x.ai/v1", "grok-4.7"),
 }
 
-DEV_SESSION_SECRET = "dev-only-session-secret"
+MIN_SESSION_SECRET_LENGTH = 32
 
 
 class Settings(BaseSettings):
@@ -31,7 +32,7 @@ class Settings(BaseSettings):
     db_user: str = "postgres"
     db_password: str | None = None
     db_name: str = "voice_ai"
-    session_secret: str = DEV_SESSION_SECRET
+    session_secret: str | None = None
     session_days: int = 14
 
     seed_user_email: str = "me@example.com"
@@ -62,7 +63,18 @@ class Settings(BaseSettings):
     max_utterance_seconds: int = 29
     max_sample_seconds: int = 60
     audio_storage_dir: str = "storage"
-    cors_origins: str = "http://localhost:5173"
+    cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    llm_max_output_tokens: int = 2048
+
+    @model_validator(mode="after")
+    def _require_strong_session_secret(self) -> "Settings":
+        if self.session_secret and len(self.session_secret) >= MIN_SESSION_SECRET_LENGTH:
+            return self
+        if self.is_production:
+            raise ValueError(f"SESSION_SECRET must be at least {MIN_SESSION_SECRET_LENGTH} characters in production.")
+        # Never a known default: without a secret, sessions simply end when the server restarts.
+        self.session_secret = secrets.token_hex(32)
+        return self
 
     @property
     def sqlalchemy_url(self) -> str | URL:

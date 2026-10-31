@@ -33,8 +33,11 @@ async def create_profile(
         raise AppError(400, "consent_required", "Confirm that you have the right to clone this voice.")
     if language not in VOICE_LANGUAGES:
         raise AppError(400, "unsupported_language", "That language is not supported for voice cloning.")
+    name = name.strip()
+    if not name:
+        raise AppError(400, "invalid_name", "Give the voice profile a name.")
 
-    wav = await normalize_to_wav(audio_bytes, ENROLLMENT_SAMPLE_RATE)
+    wav = await normalize_to_wav(audio_bytes, ENROLLMENT_SAMPLE_RATE, settings.max_sample_seconds + 1)
     duration = wav_duration_seconds(wav)
     if duration < MIN_SAMPLE_SECONDS:
         raise AppError(
@@ -118,6 +121,7 @@ async def delete_profile(
     session: AsyncSession, voice: VoiceProvider, user: User, profile_id: uuid.UUID
 ) -> None:
     profile = await get_profile(session, user, profile_id)
+    await session.commit()  # Releases the database connection during the provider call.
     # Provider first: if this fails, the local record remains and deletion can be retried.
     if profile.provider_voice_id:
         await voice.delete_voice(profile.provider_voice_id)

@@ -16,6 +16,7 @@ class OpenAICompatibleLLM:
         base_url: str,
         model: str,
         timeout_seconds: float,
+        max_output_tokens: int = 2048,
     ) -> None:
         if not api_key:
             raise ProviderError(
@@ -23,6 +24,7 @@ class OpenAICompatibleLLM:
             )
         self._provider = provider
         self._model = model
+        self._max_output_tokens = max_output_tokens
         self._client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds)
 
     async def generate(self, system_prompt: str, messages: list[dict[str, str]]) -> str:
@@ -54,11 +56,13 @@ class OpenAICompatibleLLM:
                 instructions=system_prompt,
                 input=messages,
                 store=False,
+                max_output_tokens=self._max_output_tokens,
             )
             return response.output_text
 
         response = await self._client.chat.completions.create(
             model=self._model,
             messages=[{"role": "system", "content": system_prompt}, *messages],
+            max_completion_tokens=self._max_output_tokens,
         )
         return response.choices[0].message.content

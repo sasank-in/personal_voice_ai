@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import time
 import uuid
@@ -6,6 +7,7 @@ from dataclasses import dataclass
 from typing import TypeVar
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
@@ -26,6 +28,7 @@ from app.utils.audio import (
 logger = logging.getLogger(__name__)
 
 HISTORY_MESSAGES = 20
+MAX_PARALLEL_TTS = 3
 DEFAULT_TITLE = "New conversation"
 
 SYSTEM_PROMPT = """You are a helpful personal voice assistant.
@@ -158,7 +161,7 @@ class ConversationEngine:
         audio_bytes: bytes,
         profile: VoiceProfile | None,
     ) -> TurnResult:
-        wav = await normalize_to_wav(audio_bytes)
+        wav = await normalize_to_wav(audio_bytes, max_seconds=self._settings.max_utterance_seconds + 2)
         if wav_duration_seconds(wav) > self._settings.max_utterance_seconds + 1:
             raise AppError(
                 400,
@@ -188,6 +191,9 @@ class ConversationEngine:
         )
         if message is None:
             raise not_found("Message")
+        # A repeat request must not replace the link and leave an old file nothing can delete.
+        if message.audio_asset_id:
+            return await get_audio(self._session, user, message.audio_asset_id)
         asset = await self._synthesize(user, message.content, profile)
         message.audio_asset_id = asset.id
         await self._session.commit()
@@ -245,11 +251,14 @@ class ConversationEngine:
 
         async def synthesize_all() -> bytes:
             voice = self._voice()
-            parts = [
-                await voice.synthesize(profile.provider_voice_id, chunk, user.language)
-                for chunk in chunks
-            ]
-            return merge_wavs(parts)
+            limit = asyncio.Semaphore(MAX_PARALLEL_TTS)
+
+            async def synthesize_chunk(chunk: str) -> bytes:
+                async with limit:
+                    return await voice.synthesize(profile.provider_voice_id, chunk, user.language)
+
+            # gather keeps the results in chunk order.
+            return merge_wavs(await asyncio.gather(*(synthesize_chunk(chunk) for chunk in chunks)))
 
         audio = await self._record(user, "sarvam", "clone", None, len(spoken), synthesize_all)
 
@@ -276,6 +285,8 @@ class ConversationEngine:
         input_characters: int | None,
         call: Callable[[], Awaitable[T]],
     ) -> T:
+        # Ends the open transaction, so no database connection is held during a slow provider call.
+        await self._session.commit()
         started = time.perf_counter()
         status = "ok"
         try:
@@ -286,6 +297,20 @@ class ConversationEngine:
         finally:
             latency_ms = (time.perf_counter() - started) * 1000
             logger.info("%s %s %s %.0fms", provider, operation, status, latency_ms)
+            await self._save_usage(user, provider, operation, model, input_characters, latency_ms, status)
+
+    async def _save_usage(
+        self,
+        user: User,
+        provider: str,
+        operation: str,
+        model: str | None,
+        input_characters: int | None,
+        latency_ms: float,
+        status: str,
+    ) -> None:
+        # Bookkeeping must never fail a turn or hide the provider's real error.
+        try:
             self._session.add(
                 ProviderRequest(
                     user_id=user.id,
@@ -298,3 +323,6 @@ class ConversationEngine:
                 )
             )
             await self._session.commit()
+        except SQLAlchemyError:
+            logger.exception("Could not save provider usage")
+            await self._session.rollback()
