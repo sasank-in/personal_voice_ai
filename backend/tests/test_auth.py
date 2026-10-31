@@ -80,6 +80,32 @@ def test_unknown_user_still_does_the_password_work():
     assert verify_password("not-a-real-password", None) is False
 
 
+async def test_signup_creates_user_and_starts_session(anonymous_client):
+    response = await anonymous_client.post(
+        "/api/v1/auth/signup", json={"email": " New.User@Example.COM ", "password": "a-secure-password"}
+    )
+    assert response.status_code == 201
+    assert response.json()["email"] == "new.user@example.com"
+    assert "httponly" in response.headers["set-cookie"].lower()
+    assert (await anonymous_client.get("/api/v1/me")).json()["email"] == "new.user@example.com"
+
+
+async def test_signup_rejects_duplicate_email_and_invalid_inputs(users, anonymous_client):
+    duplicate = await anonymous_client.post(
+        "/api/v1/auth/signup", json={"email": " OWNER@example.com ", "password": "a-secure-password"}
+    )
+    assert duplicate.status_code == 409
+    assert duplicate.json()["error"]["code"] == "email_already_registered"
+
+    short_password = await anonymous_client.post(
+        "/api/v1/auth/signup", json={"email": "new@example.com", "password": "short"}
+    )
+    invalid_email = await anonymous_client.post(
+        "/api/v1/auth/signup", json={"email": "not-an-email", "password": "a-secure-password"}
+    )
+    assert short_password.status_code == invalid_email.status_code == 422
+
+
 async def test_protected_routes_require_login(anonymous_client):
     for path in ("/api/v1/me", "/api/v1/voices", "/api/v1/conversations", f"/api/v1/audio/{uuid.uuid4()}"):
         response = await anonymous_client.get(path)

@@ -2,6 +2,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Cookie, Response
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.api.deps import SESSION_COOKIE, SessionDep, SettingsDep, UserDep
 from app.core.config import Settings
@@ -9,7 +10,7 @@ from app.core.errors import AppError
 from app.core.rate_limit import LoginLimit, check_rate_limit
 from app.core.security import create_session_token, hash_password, read_session_token, verify_password
 from app.models import User
-from app.schemas.api import LoginRequest, PasswordChange, UserOut, UserUpdate
+from app.schemas.api import LoginRequest, PasswordChange, SignupRequest, UserOut, UserUpdate
 from app.services.languages import VOICE_LANGUAGES
 
 router = APIRouter(tags=["auth"])
@@ -25,6 +26,32 @@ def set_session_cookie(response: Response, user: User, settings: Settings) -> No
         secure=settings.is_production,
         path="/",
     )
+
+
+@router.post("/auth/signup", response_model=UserOut, status_code=201, dependencies=[LoginLimit])
+async def signup(
+    body: SignupRequest, response: Response, session: SessionDep, settings: SettingsDep
+) -> User:
+    email = body.email
+    check_rate_limit(f"signup-email:{email}", settings.login_attempts_per_minute, 60)
+
+    existing_user_id = await session.scalar(select(User.id).where(User.email == email))
+    if existing_user_id is not None:
+        raise AppError(409, "email_already_registered", "An account with this email already exists.")
+
+    user = User(email=email, password_hash=hash_password(body.password))
+    session.add(user)
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        existing_user_id = await session.scalar(select(User.id).where(User.email == email))
+        if existing_user_id is None:
+            raise
+        raise AppError(409, "email_already_registered", "An account with this email already exists.") from exc
+
+    set_session_cookie(response, user, settings)
+    return user
 
 
 @router.post("/auth/login", response_model=UserOut, dependencies=[LoginLimit])

@@ -600,6 +600,7 @@ All application endpoints are served by FastAPI. The browser must call your back
 | Method | Endpoint | Purpose |
 |---|---|---|
 | GET | `/api/v1/health` | Health check |
+| POST | `/api/v1/auth/signup` | Create an account and start a session |
 | POST | `/api/v1/auth/login` | Start a session (sets an HTTP-only cookie) |
 | POST | `/api/v1/auth/logout` | End the session |
 | POST | `/api/v1/voices` | Upload audio and create voice profile |

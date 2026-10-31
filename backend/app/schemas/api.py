@@ -1,13 +1,27 @@
+import re
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class LoginRequest(BaseModel):
     # The maximum keeps a huge password from tying up the deliberately slow hash.
     email: str = Field(max_length=320)
     password: str = Field(max_length=1024)
+
+
+class SignupRequest(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    password: str = Field(min_length=8, max_length=1024)
+
+    @field_validator("email")
+    @classmethod
+    def normalize_email(cls, email: str) -> str:
+        email = email.strip().lower()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+            raise ValueError("must be a valid email address")
+        return email
 
 
 class PasswordChange(BaseModel):
