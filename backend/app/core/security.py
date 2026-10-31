@@ -15,11 +15,26 @@ def hash_password(password: str) -> str:
     return _password_hash.hash(password)
 
 
+"""
 def verify_password(password: str, password_hash: str | None) -> bool:
-    """Do the same work for an unknown user, so timing does not reveal which emails exist."""
+    # Do the same work for an unknown user, so timing does not reveal which emails exist.
     matches = _password_hash.verify(password, password_hash or _DUMMY_HASH)
     return matches and password_hash is not None
+"""
 
+from pwdlib.exceptions import UnknownHashError
+
+def verify_password(password: str, password_hash: str | None) -> bool:
+    """Verify password while avoiding email enumeration timing differences."""
+    try:
+        matches = _password_hash.verify(
+            password,
+            password_hash or _DUMMY_HASH
+        )
+        return matches and password_hash is not None
+
+    except UnknownHashError:
+        return False
 
 @dataclass(frozen=True)
 class SessionClaims:

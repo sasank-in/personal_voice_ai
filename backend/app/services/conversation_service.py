@@ -258,7 +258,7 @@ class ConversationEngine:
                 return await usage.measure(
                     profile.provider,
                     "clone",
-                    lambda: voice.synthesize(profile.provider_voice_id, chunk, user.language),
+                    lambda: voice.synthesize(profile.provider_voice_id, chunk, profile.language),
                     input_characters=len(chunk),
                 )
 

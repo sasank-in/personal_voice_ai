@@ -69,6 +69,19 @@ async def test_voice_failure_preserves_text_and_can_be_retried(client, conversat
     assert history[1]["audio"]["id"] == retry.json()["id"]
 
 
+async def test_retry_audio_uses_voice_profile_language(client, conversation, profile, providers):
+    await client.patch("/api/v1/me", json={"language": "te-IN"})
+    message = (await send(client, conversation, generate_audio=False)).json()["assistant_message"]
+
+    retry = await client.post(
+        f"/api/v1/conversations/{conversation['id']}/messages/{message['id']}/audio",
+        json={"voice_profile_id": profile["id"]},
+    )
+
+    assert retry.status_code == 200
+    assert providers.synthesized[-1][2] == "en-IN"
+
+
 async def test_llm_failure_saves_nothing_so_retry_cannot_duplicate(client, conversation, providers):
     providers.llm_error = ProviderError(
         "provider_unavailable", "Down.", stage="generating_text", retryable=True
