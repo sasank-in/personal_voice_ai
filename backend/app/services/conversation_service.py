@@ -1,22 +1,26 @@
 import asyncio
 import logging
-import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import TypeVar
 
 from sqlalchemy import select, update
-from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings
 from app.core.errors import AppError, not_found
 from app.db.base import utc_now
-from app.models import AudioAsset, Conversation, Message, ProviderRequest, User, VoiceProfile
+from app.models import AudioAsset, Conversation, Message, User, VoiceProfile
 from app.services.audio_store import AudioStore
 from app.services.languages import VOICE_LANGUAGES
-from app.services.providers.base import LLMProvider, ProviderError, SpeechToTextProvider, VoiceProvider
+from app.services.providers.base import (
+    LLMProvider,
+    ProviderError,
+    SpeechToTextProvider,
+    SynthesizedAudio,
+    VoiceProvider,
+)
+from app.services.usage import UsageRecorder
 from app.utils.audio import (
     merge_wavs,
     normalize_to_wav,
@@ -43,8 +47,6 @@ Communication style:
 - If a question is ambiguous, ask one focused clarification.
 - Never claim to be the account owner or impersonate another person.
 - Do not invent facts or claim to have performed actions that were not performed."""
-
-T = TypeVar("T")
 
 
 @dataclass
@@ -169,15 +171,14 @@ class ConversationEngine:
                 f"Keep recordings under {self._settings.max_utterance_seconds + 1} seconds.",
                 stage="uploading",
             )
-        transcript = await self._record(
-            user,
+        transcription = await self._usage_for(user).track(
             self._settings.stt_provider,
             "transcribe",
-            self._settings.resolved_stt_model,
-            None,
             lambda: self._stt().transcribe(wav, "utterance.wav", user.language),
+            model=self._settings.resolved_stt_model,
+            audio_seconds=wav_duration_seconds(wav),
         )
-        return await self._run_turn(user, conversation, transcript, profile)
+        return await self._run_turn(user, conversation, transcription.text, profile)
 
     async def generate_message_audio(
         self, user: User, conversation: Conversation, message_id: uuid.UUID, profile: VoiceProfile
@@ -211,14 +212,13 @@ class ConversationEngine:
         messages.append({"role": "user", "content": content})
 
         language = VOICE_LANGUAGES.get(user.language, "English")
-        reply = await self._record(
-            user,
+        generated = await self._usage_for(user).track(
             self._settings.llm_provider,
             "generate",
-            self._settings.resolved_llm_model,
-            None,
             lambda: self._llm().generate(SYSTEM_PROMPT.format(language=language), messages),
+            model=self._settings.resolved_llm_model,
         )
+        reply = generated.text
 
         # Saved before synthesis, so a voice failure cannot lose the reply.
         now = utc_now()
@@ -249,18 +249,27 @@ class ConversationEngine:
         if not chunks:
             raise ProviderError("nothing_to_speak", "The reply has no speakable text.", stage="generating_audio")
 
-        async def synthesize_all() -> bytes:
-            voice = self._voice()
-            limit = asyncio.Semaphore(MAX_PARALLEL_TTS)
+        usage = self._usage_for(user)
+        limit = asyncio.Semaphore(MAX_PARALLEL_TTS)
+        voice = self._voice()
 
-            async def synthesize_chunk(chunk: str) -> bytes:
-                async with limit:
-                    return await voice.synthesize(profile.provider_voice_id, chunk, user.language)
+        async def synthesize_chunk(chunk: str) -> SynthesizedAudio:
+            async with limit:
+                return await usage.measure(
+                    profile.provider,
+                    "clone",
+                    lambda: voice.synthesize(profile.provider_voice_id, chunk, user.language),
+                    input_characters=len(chunk),
+                )
 
-            # gather keeps the results in chunk order.
-            return merge_wavs(await asyncio.gather(*(synthesize_chunk(chunk) for chunk in chunks)))
-
-        audio = await self._record(user, "sarvam", "clone", None, len(spoken), synthesize_all)
+        await usage.release_connection()
+        # gather keeps chunk order. Every chunk finishes first, so each provider call gets its row.
+        results = await asyncio.gather(*(synthesize_chunk(chunk) for chunk in chunks), return_exceptions=True)
+        await usage.flush()
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+        audio = merge_wavs([result.audio for result in results])
 
         audio_id = uuid.uuid4()
         object_key = await self._store.save(user.id, audio_id, audio)
@@ -276,53 +285,5 @@ class ConversationEngine:
         await self._session.commit()
         return asset
 
-    async def _record(
-        self,
-        user: User,
-        provider: str,
-        operation: str,
-        model: str | None,
-        input_characters: int | None,
-        call: Callable[[], Awaitable[T]],
-    ) -> T:
-        # Ends the open transaction, so no database connection is held during a slow provider call.
-        await self._session.commit()
-        started = time.perf_counter()
-        status = "ok"
-        try:
-            return await call()
-        except ProviderError as exc:
-            status = exc.code
-            raise
-        finally:
-            latency_ms = (time.perf_counter() - started) * 1000
-            logger.info("%s %s %s %.0fms", provider, operation, status, latency_ms)
-            await self._save_usage(user, provider, operation, model, input_characters, latency_ms, status)
-
-    async def _save_usage(
-        self,
-        user: User,
-        provider: str,
-        operation: str,
-        model: str | None,
-        input_characters: int | None,
-        latency_ms: float,
-        status: str,
-    ) -> None:
-        # Bookkeeping must never fail a turn or hide the provider's real error.
-        try:
-            self._session.add(
-                ProviderRequest(
-                    user_id=user.id,
-                    provider=provider,
-                    operation=operation,
-                    model=model,
-                    input_characters=input_characters,
-                    latency_ms=latency_ms,
-                    status=status,
-                )
-            )
-            await self._session.commit()
-        except SQLAlchemyError:
-            logger.exception("Could not save provider usage")
-            await self._session.rollback()
+    def _usage_for(self, user: User) -> UsageRecorder:
+        return UsageRecorder(self._session, user.id)

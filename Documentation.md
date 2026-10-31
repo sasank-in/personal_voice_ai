@@ -23,6 +23,8 @@ Milestones 0 to 4 are built. These decisions differ from the plan below:
 - **Request protection:** state-changing requests from an origin outside `CORS_ORIGINS` are refused, oversized or length-less bodies are refused before parsing, and API docs are hidden in production. In production, add the site's real origin to `CORS_ORIGINS`.
 - **Audio decoding:** uploads are decoded from temporary files that are deleted immediately, only from an allowed list of formats, and only up to a length limit.
 - **Reply length:** LLM replies are capped by `LLM_MAX_OUTPUT_TOKENS` (default 2048).
+- **Usage records:** `provider_requests` holds the fields in section 15 for every provider call, including enrollment and deletion, with one row per speech chunk. Audio length replaces the general "output usage" for speech.
+- **CI/CD (from Milestone 6):** GitHub Actions tests every change and publishes container images, and can deploy over SSH to a Docker server. The production stack adds nginx for the frontend and Caddy for automatic HTTPS. See the README.
 
 **Verified live:** the Groq LLM, Sarvam speech-to-text with the async client, Groq Whisper, PostgreSQL, and a spoken turn through a real browser.
 

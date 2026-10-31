@@ -54,6 +54,7 @@ async def test_sarvam_create_voice_parses_response_and_never_retries():
     recorder = Recorder(201, {"status": "success", "data": {"voice_id": "svc-1", "status": "saved", "reference_text": "Hi"}})
     created = await sarvam_voice(recorder).create_voice(b"wav", "sample.wav", "profile-uuid", "en-IN")
     assert (created.provider_voice_id, created.reference_text) == ("svc-1", "Hi")
+    assert created.usage.request_id is None  # Sarvam's documented create response has none.
     request = recorder.requests[0]
     assert (request.method, request.url.path) == ("POST", "/voices/create")
     assert request.headers["api-subscription-key"] == "test-key"
@@ -69,8 +70,9 @@ async def test_sarvam_create_voice_parses_response_and_never_retries():
 async def test_sarvam_synthesize_decodes_audio_and_sends_language():
     encoded = base64.b64encode(b"RIFFaudio").decode()
     recorder = Recorder(200, {"audio_b64": encoded, "audio": encoded, "request_id": "r"})
-    audio = await sarvam_voice(recorder).synthesize("svc-1", "Hello", "te-IN")
-    assert audio == b"RIFFaudio"
+    result = await sarvam_voice(recorder).synthesize("svc-1", "Hello", "te-IN")
+    assert result.audio == b"RIFFaudio"
+    assert result.usage.request_id == "r"
     request = recorder.requests[0]
     assert request.url.path == "/voices/clone"
     assert b"svc-1" in request.content and b"te-IN" in request.content
@@ -113,12 +115,14 @@ async def test_sarvam_errors_map_to_stable_codes(status, body, code):
     with pytest.raises(ProviderError) as error:
         await sarvam_voice(Recorder(status, body)).create_voice(b"wav", "s.wav", "n", "en-IN")
     assert error.value.code == code
+    assert error.value.request_id == "r"
     assert "test-key" not in error.value.message
 
 
 async def test_sarvam_stt_parses_transcript_and_rejects_empty():
     recorder = Recorder(200, {"request_id": "r", "transcript": " Hello there ", "language_code": "en-IN"})
-    assert await sarvam_stt(recorder).transcribe(b"wav", "u.wav", "en-IN") == "Hello there"
+    result = await sarvam_stt(recorder).transcribe(b"wav", "u.wav", "en-IN")
+    assert (result.text, result.usage.request_id) == ("Hello there", "r")
     assert recorder.requests[0].url.path == "/speech-to-text"
     assert b"saaras:v4" in recorder.requests[0].content
 
@@ -131,12 +135,16 @@ async def test_xai_uses_responses_without_server_side_storage():
     recorder = Recorder(200, {
         "id": "resp", "object": "response", "created_at": 0, "model": "grok-4.7", "status": "completed",
         "parallel_tool_calls": False, "tool_choice": "auto", "tools": [],
+        "usage": {"input_tokens": 9, "output_tokens": 3, "total_tokens": 12,
+                  "input_tokens_details": {"cached_tokens": 0}, "output_tokens_details": {"reasoning_tokens": 0}},
         "output": [{"type": "message", "id": "m", "role": "assistant", "status": "completed",
                     "content": [{"type": "output_text", "text": "Hi there", "annotations": []}]}],
     })
     llm = OpenAICompatibleLLM("xai", "test-key", "https://api.x.ai/v1", "grok-4.7", 5)
     llm._client = openai_client(recorder, "https://api.x.ai/v1")
-    assert await llm.generate("Be brief.", [{"role": "user", "content": "Hello"}]) == "Hi there"
+    result = await llm.generate("Be brief.", [{"role": "user", "content": "Hello"}])
+    assert result.text == "Hi there"
+    assert (result.usage.request_id, result.usage.input_tokens, result.usage.output_tokens) == ("resp", 9, 3)
 
     request = recorder.requests[0]
     assert str(request.url) == "https://api.x.ai/v1/responses"
@@ -150,11 +158,14 @@ async def test_xai_uses_responses_without_server_side_storage():
 async def test_groq_llm_uses_chat_completions_and_maps_errors():
     recorder = Recorder(200, {
         "id": "c", "object": "chat.completion", "created": 0, "model": "m",
+        "usage": {"prompt_tokens": 7, "completion_tokens": 2, "total_tokens": 9},
         "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "Hello"}}],
     })
     llm = OpenAICompatibleLLM("groq", "test-key", "https://api.groq.com/openai/v1", "m", 5)
     llm._client = openai_client(recorder, "https://api.groq.com/openai/v1")
-    assert await llm.generate("Be brief.", [{"role": "user", "content": "Hi"}]) == "Hello"
+    result = await llm.generate("Be brief.", [{"role": "user", "content": "Hi"}])
+    assert result.text == "Hello"
+    assert (result.usage.request_id, result.usage.input_tokens, result.usage.output_tokens) == ("c", 7, 2)
     sent = json.loads(recorder.requests[0].content)
     assert sent["messages"][0]["role"] == "system"
     assert sent["max_completion_tokens"] == 2048
@@ -169,7 +180,7 @@ async def test_groq_stt_sends_iso_language_and_parses_text():
     recorder = Recorder(200, {"text": " Hello there "})
     stt = GroqSpeechToText("test-key", "whisper-large-v3-turbo", 5)
     stt._client = openai_client(recorder, "https://api.groq.com/openai/v1")
-    assert await stt.transcribe(b"wav", "u.wav", "te-IN") == "Hello there"
+    assert (await stt.transcribe(b"wav", "u.wav", "te-IN")).text == "Hello there"
     assert recorder.requests[0].url.path.endswith("/audio/transcriptions")
     assert b"te" in recorder.requests[0].content
 

@@ -1,0 +1,22 @@
+name: Roll back
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Published image tag to run, for example sha-<full commit hash>"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/deploy-server.yml
+    with:
+      image_tag: ${{ inputs.image_tag }}
+    secrets: inherit

@@ -13,7 +13,20 @@ def build_client(api_key: str | None, timeout_seconds: float) -> AsyncSarvamAI:
     return AsyncSarvamAI(api_subscription_key=api_key, timeout=timeout_seconds)
 
 
+def _error_request_id(exc: Exception) -> str | None:
+    body = getattr(exc, "body", None)
+    details = body.get("error", body) if isinstance(body, dict) else None
+    request_id = details.get("request_id") if isinstance(details, dict) else None
+    return request_id or None
+
+
 def map_error(exc: Exception, stage: str, failure_code: str, failure_message: str) -> ProviderError:
+    error = _classify(exc, stage, failure_code, failure_message)
+    error.request_id = _error_request_id(exc)
+    return error
+
+
+def _classify(exc: Exception, stage: str, failure_code: str, failure_message: str) -> ProviderError:
     if isinstance(exc, httpx.TimeoutException):
         return ProviderError(
             "provider_timeout", "The voice service timed out.", stage=stage, retryable=True

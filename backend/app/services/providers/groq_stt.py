@@ -1,7 +1,8 @@
 import openai
 from openai import AsyncOpenAI
 
-from app.services.providers.base import ProviderError
+from app.services.providers.base import ProviderError, Transcription
+from app.services.providers.openai_common import map_openai_error, response_usage
 
 STAGE = "transcribing"
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
@@ -29,7 +30,7 @@ class GroqSpeechToText:
         audio_bytes: bytes,
         filename: str,
         language_code: str = "unknown",
-    ) -> str:
+    ) -> Transcription:
         options = {}
         language = whisper_language(language_code)
         if language:
@@ -41,24 +42,15 @@ class GroqSpeechToText:
                 file=(filename, audio_bytes),
                 **options,
             )
-        except openai.AuthenticationError as exc:
-            raise ProviderError(
-                "provider_auth_failed", "The speech service rejected the configured key.", stage=STAGE, status_code=401
-            ) from exc
-        except openai.RateLimitError as exc:
-            raise ProviderError(
-                "provider_rate_limited", "The speech service is rate limited.", stage=STAGE, retryable=True, status_code=429
-            ) from exc
-        except (openai.APITimeoutError, openai.APIConnectionError, openai.InternalServerError) as exc:
-            raise ProviderError(
-                "provider_unavailable", "The speech service is unavailable.", stage=STAGE, retryable=True
-            ) from exc
         except openai.APIError as exc:
-            raise ProviderError(
-                "transcription_failed", "We could not transcribe that recording.", stage=STAGE
+            raise map_openai_error(
+                exc, STAGE, "speech service", "transcription_failed", "We could not transcribe that recording."
             ) from exc
 
+        usage = response_usage(response)
         transcript = (response.text or "").strip()
         if not transcript:
-            raise ProviderError("empty_transcript", "No speech was detected in that recording.", stage=STAGE)
-        return transcript
+            raise ProviderError(
+                "empty_transcript", "No speech was detected in that recording.", stage=STAGE, request_id=usage.request_id
+            )
+        return Transcription(transcript, usage)

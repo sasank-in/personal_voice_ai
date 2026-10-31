@@ -10,6 +10,7 @@ from app.db.base import utc_now
 from app.models import User, VoiceProfile
 from app.services.languages import VOICE_LANGUAGES
 from app.services.providers.base import ProviderError, VoiceProvider
+from app.services.usage import UsageRecorder
 from app.utils.audio import normalize_to_wav, wav_duration_seconds
 
 logger = logging.getLogger(__name__)
@@ -62,13 +63,19 @@ async def create_profile(
 
     # The profile UUID is the provider-side name, so a timed-out attempt can be found again.
     provider_name = str(profile.id)
+    usage = UsageRecorder(session, user.id)
     try:
-        created = await voice.create_voice(wav, "sample.wav", provider_name, language)
+        created = await usage.track(
+            profile.provider,
+            "create_voice",
+            lambda: voice.create_voice(wav, "sample.wav", provider_name, language),
+            audio_seconds=duration,
+        )
         profile.provider_voice_id = created.provider_voice_id
         profile.reference_text = created.reference_text
         profile.status = "ready"
     except ProviderError as exc:
-        recovered = await _reconcile(voice, provider_name) if exc.retryable else None
+        recovered = await _reconcile(usage, profile.provider, voice, provider_name) if exc.retryable else None
         if not recovered:
             profile.status = "failed"
             await session.commit()
@@ -80,9 +87,9 @@ async def create_profile(
     return profile
 
 
-async def _reconcile(voice: VoiceProvider, provider_name: str) -> str | None:
+async def _reconcile(usage: UsageRecorder, provider: str, voice: VoiceProvider, provider_name: str) -> str | None:
     try:
-        return await voice.find_voice_id(provider_name)
+        return await usage.track(provider, "find_voice", lambda: voice.find_voice_id(provider_name))
     except ProviderError:
         logger.warning("Could not reconcile enrollment for profile %s", provider_name)
         return None
@@ -121,10 +128,12 @@ async def delete_profile(
     session: AsyncSession, voice: VoiceProvider, user: User, profile_id: uuid.UUID
 ) -> None:
     profile = await get_profile(session, user, profile_id)
-    await session.commit()  # Releases the database connection during the provider call.
     # Provider first: if this fails, the local record remains and deletion can be retried.
     if profile.provider_voice_id:
-        await voice.delete_voice(profile.provider_voice_id)
+        provider_voice_id = profile.provider_voice_id
+        await UsageRecorder(session, user.id).track(
+            profile.provider, "delete_voice", lambda: voice.delete_voice(provider_voice_id)
+        )
     profile.provider_voice_id = None
     profile.reference_text = None
     profile.status = "deleted"

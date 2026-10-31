@@ -1,0 +1,7 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "A Groq model name that looks random enough to be flagged as a key"
+regexTarget = "secret"
+regexes = ['''^whisper-large-v3-turbo$''']

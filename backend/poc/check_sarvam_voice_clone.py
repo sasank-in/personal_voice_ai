@@ -48,10 +48,11 @@ async def run(args: argparse.Namespace) -> int:
         print(f"voice created; reference text: {created.reference_text}")
 
     started = time.perf_counter()
-    audio = await voice.synthesize(voice_id, args.text, args.language)
+    result = await voice.synthesize(voice_id, args.text, args.language)
     path = OUTPUT_DIR / "clone_output.wav"
-    path.write_bytes(audio)
-    print(f"OK in {time.perf_counter() - started:.2f}s: {wav_duration_seconds(audio):.1f}s of audio at {path}")
+    path.write_bytes(result.audio)
+    print(f"OK in {time.perf_counter() - started:.2f}s: {wav_duration_seconds(result.audio):.1f}s of audio at {path}")
+    print(f"usage: {result.usage}")
     return 0
 
 

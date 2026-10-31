@@ -2,7 +2,7 @@ import base64
 
 from sarvamai.core.api_error import ApiError
 
-from app.services.providers.base import CreatedVoice
+from app.services.providers.base import CreatedVoice, ProviderUsage, SynthesizedAudio
 from app.services.providers.sarvam_common import build_client, map_error
 
 
@@ -41,6 +41,7 @@ class SarvamVoice:
         return CreatedVoice(
             provider_voice_id=result.data.voice_id,
             reference_text=result.data.reference_text,
+            usage=ProviderUsage(request_id=getattr(result, "request_id", None) or None),
         )
 
     async def find_voice_id(self, name: str) -> str | None:
@@ -54,7 +55,7 @@ class SarvamVoice:
                 return voice.id
         return None
 
-    async def synthesize(self, voice_id: str, text: str, language_code: str) -> bytes:
+    async def synthesize(self, voice_id: str, text: str, language_code: str) -> SynthesizedAudio:
         try:
             result = await self._client.voice_cloning.convert(
                 voice_id=voice_id,
@@ -63,7 +64,7 @@ class SarvamVoice:
             )
         except Exception as exc:
             raise map_error(exc, "generating_audio", "voice_generation_failed", "We could not generate speech.") from exc
-        return base64.b64decode(result.audio_b64)
+        return SynthesizedAudio(base64.b64decode(result.audio_b64), ProviderUsage(request_id=result.request_id or None))
 
     async def delete_voice(self, voice_id: str) -> None:
         try:

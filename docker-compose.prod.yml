@@ -1,0 +1,79 @@
+# Production stack. Usage:
+#   docker compose -f docker-compose.prod.yml --env-file .env.production up -d --wait
+# IMAGE_PREFIX and IMAGE_TAG select published images. Add --build to build them locally instead.
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-voice_ai}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME:-voice_ai}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    image: ${IMAGE_PREFIX:-personal-voice-ai}/backend:${IMAGE_TAG:-local}
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: production
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET}
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_USER: ${DB_USER:-voice_ai}
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD}
+      DB_NAME: ${DB_NAME:-voice_ai}
+      SARVAM_API_KEY: ${SARVAM_API_KEY:-}
+      STT_PROVIDER: ${STT_PROVIDER:-sarvam}
+      LLM_PROVIDER: ${LLM_PROVIDER:-groq}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      XAI_API_KEY: ${XAI_API_KEY:-}
+      CORS_ORIGINS: https://${DOMAIN:?Set DOMAIN}
+    volumes:
+      - audio_data:/data/storage
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  frontend:
+    image: ${IMAGE_PREFIX:-personal-voice-ai}/frontend:${IMAGE_TAG:-local}
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      frontend:
+        condition: service_healthy
+    environment:
+      DOMAIN: ${DOMAIN:?Set DOMAIN}
+    ports:
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:${HTTPS_PORT:-443}"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  db_data:
+  audio_data:
+  caddy_data:
+  caddy_config:

@@ -18,7 +18,14 @@ from app.db.session import get_session
 from app.main import app
 from app.models import User
 from app.services.audio_store import AudioStore
-from app.services.providers.base import CreatedVoice, ProviderError
+from app.services.providers.base import (
+    CreatedVoice,
+    GeneratedText,
+    ProviderError,
+    ProviderUsage,
+    SynthesizedAudio,
+    Transcription,
+)
 
 PASSWORD = "correct-horse"
 
@@ -65,18 +72,18 @@ class FakeProviders:
         self.llm_calls.append((system_prompt, messages))
         if self.llm_error:
             raise self.llm_error
-        return self.reply
+        return GeneratedText(self.reply, ProviderUsage("req-llm", input_tokens=12, output_tokens=5))
 
     async def transcribe(self, audio_bytes, filename, language_code="unknown"):
         if self.stt_error:
             raise self.stt_error
-        return self.transcript
+        return Transcription(self.transcript, ProviderUsage("req-stt"))
 
     async def create_voice(self, audio_bytes, filename, name, language):
         self.created_names.append(name)
         if self.create_error:
             raise self.create_error
-        return CreatedVoice(f"svc-{len(self.created_names)}", "Reference text")
+        return CreatedVoice(f"svc-{len(self.created_names)}", "Reference text", ProviderUsage("req-create"))
 
     async def find_voice_id(self, name):
         return self.existing_voice
@@ -85,7 +92,7 @@ class FakeProviders:
         self.synthesized.append((voice_id, text, language_code))
         if self.tts_error:
             raise self.tts_error
-        return make_wav(0.1)
+        return SynthesizedAudio(make_wav(0.1), ProviderUsage(f"req-tts-{len(self.synthesized)}"))
 
     async def delete_voice(self, voice_id):
         if self.delete_error:

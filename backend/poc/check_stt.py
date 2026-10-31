@@ -27,14 +27,15 @@ async def main() -> int:
     started = time.perf_counter()
     try:
         wav = await normalize_to_wav(args.recording.read_bytes())
-        transcript = await build_stt(settings).transcribe(wav, "utterance.wav", args.language)
+        result = await build_stt(settings).transcribe(wav, "utterance.wav", args.language)
     except InvalidAudioError as exc:
         print(f"FAILED: {exc}")
         return 1
     except ProviderError as exc:
-        print(f"FAILED {exc.code} status={exc.status_code}: {exc.message}")
+        print(f"FAILED {exc.code} status={exc.status_code} request_id={exc.request_id}: {exc.message}")
         return 1
-    print(f"OK in {time.perf_counter() - started:.2f}s: {transcript}")
+    print(f"OK in {time.perf_counter() - started:.2f}s: {result.text}")
+    print(f"usage: {result.usage}")
     return 0
 
 

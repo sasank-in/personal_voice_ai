@@ -31,21 +31,21 @@ async def main() -> int:
     try:
         started = time.perf_counter()
         wav = await normalize_to_wav(args.recording.read_bytes())
-        transcript = await build_stt(settings).transcribe(wav, "utterance.wav", args.language)
+        transcription = await build_stt(settings).transcribe(wav, "utterance.wav", args.language)
         after_stt = time.perf_counter()
-        print(f"[STT {after_stt - started:.2f}s] {transcript}")
+        print(f"[STT {after_stt - started:.2f}s] {transcription.text}")
 
-        reply = await build_llm(settings).generate(
+        generated = await build_llm(settings).generate(
             f"You are a helpful personal voice assistant. Reply in {args.language}, in at most two spoken sentences.",
-            [{"role": "user", "content": transcript}],
+            [{"role": "user", "content": transcription.text}],
         )
         after_llm = time.perf_counter()
-        print(f"[LLM {after_llm - after_stt:.2f}s] {reply}")
+        print(f"[LLM {after_llm - after_stt:.2f}s] {generated.text}")
 
         voice = build_voice(settings)
         chunks = [
-            await voice.synthesize(voice_id, chunk, args.language)
-            for chunk in split_for_tts(strip_markdown(reply))
+            (await voice.synthesize(voice_id, chunk, args.language)).audio
+            for chunk in split_for_tts(strip_markdown(generated.text))
         ]
         path = OUTPUT_DIR / "pipeline_output.wav"
         path.write_bytes(merge_wavs(chunks))

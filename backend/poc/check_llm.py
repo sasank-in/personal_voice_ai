@@ -18,14 +18,15 @@ async def main() -> int:
     print(f"provider={settings.llm_provider} model={settings.resolved_llm_model}")
     started = time.perf_counter()
     try:
-        reply = await build_llm(settings).generate(
+        result = await build_llm(settings).generate(
             "You are a helpful assistant. Reply in one short sentence.",
             [{"role": "user", "content": "Say hello and name one planet."}],
         )
     except ProviderError as exc:
-        print(f"FAILED {exc.code}: {exc.message}")
+        print(f"FAILED {exc.code} request_id={exc.request_id}: {exc.message}")
         return 1
-    print(f"OK in {time.perf_counter() - started:.2f}s: {reply}")
+    print(f"OK in {time.perf_counter() - started:.2f}s: {result.text}")
+    print(f"usage: {result.usage}")
     return 0
 
 

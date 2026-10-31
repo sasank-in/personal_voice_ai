@@ -1,6 +1,6 @@
 import mimetypes
 
-from app.services.providers.base import ProviderError
+from app.services.providers.base import ProviderError, ProviderUsage, Transcription
 from app.services.providers.sarvam_common import build_client, map_error
 
 
@@ -14,7 +14,7 @@ class SarvamSpeechToText:
         audio_bytes: bytes,
         filename: str,
         language_code: str = "unknown",
-    ) -> str:
+    ) -> Transcription:
         content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
         try:
             response = await self._client.speech_to_text.transcribe(
@@ -27,9 +27,10 @@ class SarvamSpeechToText:
                 exc, "transcribing", "transcription_failed", "We could not transcribe that recording."
             ) from exc
 
+        request_id = response.request_id or None
         transcript = (response.transcript or "").strip()
         if not transcript:
             raise ProviderError(
-                "empty_transcript", "No speech was detected in that recording.", stage="transcribing"
+                "empty_transcript", "No speech was detected in that recording.", stage="transcribing", request_id=request_id
             )
-        return transcript
+        return Transcription(transcript, ProviderUsage(request_id=request_id))
