@@ -1,0 +1,16 @@
+fastapi==0.141.1
+uvicorn==0.32.1
+pydantic-settings==2.15.0
+python-dotenv==1.2.4
+sqlalchemy==2.0.52
+asyncpg==0.31.0
+alembic==1.19.1
+python-multipart==0.0.32
+httpx==0.28.1
+openai==3.42.0
+sarvamai==0.1.41
+pwdlib[argon2]==0.3.1
+imageio-ffmpeg==0.7.0
+pytest==9.2.0
+pytest-asyncio==1.4.1
+aiosqlite==0.22.1
