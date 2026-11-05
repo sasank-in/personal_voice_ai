@@ -1,10 +1,24 @@
 import { useEffect, useState } from 'react'
+import { Alert } from './Alert'
+import { AudioPlayer } from './AudioPlayer'
 import { AudioRecorder } from './AudioRecorder'
+import { ShieldIcon, Spinner } from './Icons'
 import { ApiError, api } from '../services/api'
 import { saveSelectedVoice } from '../services/selectedVoice'
 import type { Languages, VoiceProfile } from '../types'
 
 const MAX_SAMPLE_SECONDS = 30
+
+const PASSAGE =
+  'The morning was calm and bright. I made a cup of tea, opened the window, and listened to the city waking up. ' +
+  'Today I want to plan my week, learn something new, and call a friend I have not spoken to in a while.'
+
+const TIPS = [
+  'Record 10 to 15 seconds in a quiet room.',
+  'Only one person should be speaking.',
+  'Keep the microphone at a steady distance.',
+  'Avoid music, echo and background voices.',
+]
 
 interface Props {
   languages: Languages
@@ -53,70 +67,96 @@ export function VoiceEnrollment({ languages, defaultLanguage, onCreated }: Props
     }
   }
 
+  const ready = Boolean(sample) && consent && name.trim().length > 0
+
   return (
-    <div className="stack">
-      <section className="card">
-        <h2>Before you record</h2>
-        <ul className="tips">
-          <li>Record 10 to 15 seconds in a quiet room.</li>
-          <li>Only one person should be speaking.</li>
-          <li>Keep the microphone at a consistent distance.</li>
-          <li>Speak naturally and clearly.</li>
-          <li>Avoid music, echo and background conversations.</li>
-        </ul>
-      </section>
-
-      <section className="card stack">
-        <h2>Your details</h2>
-        <label className="field">
-          Profile name
-          <input value={name} maxLength={100} onChange={(event) => setName(event.target.value)} />
-        </label>
-        <label className="field">
-          Language you will record in
-          <select value={language} onChange={(event) => setLanguage(event.target.value)}>
-            {Object.entries(languages).map(([code, label]) => (
-              <option key={code} value={code}>{label}</option>
-            ))}
-          </select>
-        </label>
-        <label className="consent">
-          <input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} />
-          <span>
-            This is my own voice, or I have the owner's explicit permission. I have the right to record,
-            process and clone it, and to use it to generate new speech.
-          </span>
-        </label>
-      </section>
-
-      <section className="card stack">
-        <h2>Voice sample</h2>
-        <AudioRecorder
-          maxSeconds={MAX_SAMPLE_SECONDS}
-          disabled={!consent || creating}
-          label={sample ? 'Record again' : 'Start recording'}
-          onComplete={acceptSample}
-        />
-        {!consent && <p className="hint">Confirm the permission statement above to start recording.</p>}
-        {previewUrl && (
-          <div className="stack">
-            <p className="hint">Listen back before you continue.</p>
-            <audio src={previewUrl} controls />
+    <div className="enroll">
+      <div className="stack">
+        <section className="card step-card">
+          <header className="step-header">
+            <span className={`step-badge${consent && name.trim() ? ' is-done' : ''}`}>1</span>
+            <div>
+              <h2 className="card-title">Details and permission</h2>
+              <p className="muted">Name this voice and confirm you may clone it.</p>
+            </div>
+          </header>
+          <div className="form-row">
+            <label className="field">
+              <span className="field-label">Profile name</span>
+              <input className="input" value={name} maxLength={100} onChange={(event) => setName(event.target.value)} />
+            </label>
+            <label className="field">
+              <span className="field-label">Language you will record in</span>
+              <select className="input" value={language} onChange={(event) => setLanguage(event.target.value)}>
+                {Object.entries(languages).map(([code, label]) => (
+                  <option key={code} value={code}>{label}</option>
+                ))}
+              </select>
+            </label>
           </div>
-        )}
-        {progress !== null && <progress value={progress} max={1} aria-label="Upload progress" />}
-        {error && <p className="error" role="alert">{error}</p>}
-        <div>
-          <button
-            type="button"
-            className="button primary"
-            disabled={!sample || !consent || creating || !name.trim()}
-            onClick={submit}
-          >
-            {creating ? (progress !== null ? 'Uploading…' : 'Creating your voice…') : 'Create voice profile'}
-          </button>
+          <label className="consent">
+            <input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} />
+            <span>
+              This is my own voice, or I have the owner's explicit permission. I have the right to record,
+              process and clone it, and to use it to generate new speech.
+            </span>
+          </label>
+        </section>
+
+        <section className={`card step-card${consent ? '' : ' is-locked'}`}>
+          <header className="step-header">
+            <span className={`step-badge${sample ? ' is-done' : ''}`}>2</span>
+            <div>
+              <h2 className="card-title">Record a sample</h2>
+              <p className="muted">
+                {consent ? 'Press the microphone and read the passage below in your natural voice.' : 'Confirm permission in step 1 first.'}
+              </p>
+            </div>
+          </header>
+          {language === 'en-IN' && <blockquote className="passage">{PASSAGE}</blockquote>}
+          <AudioRecorder
+            variant="large"
+            maxSeconds={MAX_SAMPLE_SECONDS}
+            disabled={!consent || creating}
+            label={sample ? 'Record again' : 'Start recording'}
+            onComplete={acceptSample}
+          />
+        </section>
+
+        <section className={`card step-card${sample ? '' : ' is-locked'}`}>
+          <header className="step-header">
+            <span className="step-badge">3</span>
+            <div>
+              <h2 className="card-title">Review and create</h2>
+              <p className="muted">{sample ? 'Listen back. If it sounds clear, create your voice.' : 'Your recording will appear here.'}</p>
+            </div>
+          </header>
+          {previewUrl && <AudioPlayer key={previewUrl} url={previewUrl} label="Your sample" />}
+          {progress !== null && (
+            <div className="progress" aria-label="Upload progress">
+              <progress value={progress} max={1} />
+            </div>
+          )}
+          {error && <Alert tone="error">{error}</Alert>}
+          <div className="card-actions">
+            <button type="button" className="button button-primary" disabled={!ready || creating} onClick={submit}>
+              {creating && <Spinner />}
+              {creating ? (progress !== null ? 'Uploading…' : 'Creating your voice…') : 'Create voice profile'}
+            </button>
+          </div>
+        </section>
+      </div>
+
+      <aside className="card enroll-tips">
+        <h2 className="card-title">For the best result</h2>
+        <ul className="check-list">
+          {TIPS.map((tip) => <li key={tip}>{tip}</li>)}
+        </ul>
+        <div className="note">
+          <ShieldIcon size={18} />
+          <p>Your recording is sent to Sarvam to create the voice and is not kept by this app.</p>
         </div>
-      </section>
+      </aside>
     </div>
   )
 }

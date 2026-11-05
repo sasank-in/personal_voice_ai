@@ -3,7 +3,7 @@ import { VoiceEnrollment } from '../components/VoiceEnrollment'
 import { api } from '../services/api'
 import type { Languages, User } from '../types'
 
-export function Enrollment({ user, navigate }: { user: User; navigate: (path: string) => void }) {
+export function Enrollment({ user, onCreated }: { user: User; onCreated: () => void }) {
   const [languages, setLanguages] = useState<Languages | null>(null)
 
   useEffect(() => {
@@ -11,11 +11,14 @@ export function Enrollment({ user, navigate }: { user: User; navigate: (path: st
   }, [])
 
   return (
-    <div className="stack">
-      <h1>Create voice profile</h1>
-      {languages && (
-        <VoiceEnrollment languages={languages} defaultLanguage={user.language} onCreated={() => navigate('/')} />
-      )}
+    <div className="stack-lg">
+      <header className="page-header">
+        <div>
+          <h1 className="page-title">Create your voice</h1>
+          <p className="page-subtitle">Record a short, clean sample. It takes about a minute.</p>
+        </div>
+      </header>
+      {languages && <VoiceEnrollment languages={languages} defaultLanguage={user.language} onCreated={onCreated} />}
     </div>
   )
 }

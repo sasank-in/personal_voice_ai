@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     db_name: str = "voice_ai"
     session_secret: str | None = None
     session_days: int = 14
+    signup_enabled: bool = True
 
     seed_user_email: str = "me@example.com"
     seed_user_password: str | None = None

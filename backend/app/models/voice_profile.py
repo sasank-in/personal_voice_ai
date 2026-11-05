@@ -1,14 +1,16 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, utc_now
+from app.services.languages import LANGUAGE_CHECK
 
 
 class VoiceProfile(Base):
     __tablename__ = "voice_profiles"
+    __table_args__ = (CheckConstraint(LANGUAGE_CHECK, name="ck_voice_profiles_language"),)
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)

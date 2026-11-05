@@ -4,22 +4,31 @@ from fastapi import APIRouter, Cookie, Response
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from app.api.deps import SESSION_COOKIE, SessionDep, SettingsDep, UserDep
+from app.api.deps import SESSION_COOKIE, AuthDep, ProvidersDep, SessionDep, SettingsDep, StoreDep, UserDep
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.rate_limit import LoginLimit, check_rate_limit
-from app.core.security import create_session_token, hash_password, read_session_token, verify_password
-from app.models import User
-from app.schemas.api import LoginRequest, PasswordChange, SignupRequest, UserOut, UserUpdate
+from app.core.security import hash_password, read_session_token, verify_password
+from app.models import User, VoiceProfile
+from app.schemas.api import (
+    AccountDeletion,
+    AuthOptions,
+    LoginRequest,
+    PasswordChange,
+    SignupRequest,
+    UserOut,
+    UserUpdate,
+)
+from app.services import account_service
 from app.services.languages import VOICE_LANGUAGES
 
 router = APIRouter(tags=["auth"])
 
 
-def set_session_cookie(response: Response, user: User, settings: Settings) -> None:
+async def log_in(response: Response, session: SessionDep, user: User, settings: Settings) -> None:
     response.set_cookie(
         SESSION_COOKIE,
-        create_session_token(user.id, user.session_version, settings.session_secret, settings.session_days),
+        await account_service.start_session(session, user, settings),
         max_age=settings.session_days * 86400,
         httponly=True,
         samesite="lax",
@@ -28,10 +37,22 @@ def set_session_cookie(response: Response, user: User, settings: Settings) -> No
     )
 
 
+def clear_cookie(response: Response) -> None:
+    response.delete_cookie(SESSION_COOKIE, path="/")
+
+
+@router.get("/auth/options", response_model=AuthOptions)
+async def options(settings: SettingsDep) -> AuthOptions:
+    return AuthOptions(signup_enabled=settings.signup_enabled)
+
+
 @router.post("/auth/signup", response_model=UserOut, status_code=201, dependencies=[LoginLimit])
 async def signup(
     body: SignupRequest, response: Response, session: SessionDep, settings: SettingsDep
 ) -> User:
+    # Every account can spend provider credits, so a public deployment may need sign-up off.
+    if not settings.signup_enabled:
+        raise AppError(403, "signup_disabled", "Sign-up is turned off. Ask the owner for an account.")
     email = body.email
     check_rate_limit(f"signup-email:{email}", settings.login_attempts_per_minute, 60)
 
@@ -50,7 +71,7 @@ async def signup(
             raise
         raise AppError(409, "email_already_registered", "An account with this email already exists.") from exc
 
-    set_session_cookie(response, user, settings)
+    await log_in(response, session, user, settings)
     return user
 
 
@@ -63,7 +84,7 @@ async def login(body: LoginRequest, response: Response, session: SessionDep, set
     if not verify_password(body.password, user.password_hash if user else None):
         raise AppError(401, "invalid_credentials", "Incorrect email or password.")
 
-    set_session_cookie(response, user, settings)
+    await log_in(response, session, user, settings)
     return user
 
 
@@ -74,26 +95,47 @@ async def logout(
     settings: SettingsDep,
     token: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
 ) -> None:
+    """Logs out this device only, and the copied cookie stops working too."""
     claims = read_session_token(token, settings.session_secret) if token else None
-    user = await session.get(User, claims.user_id) if claims else None
-    # Revokes the token itself, so a copied cookie stops working too.
-    if user is not None and user.session_version == claims.version:
-        user.session_version += 1
-        await session.commit()
-    response.delete_cookie(SESSION_COOKIE, path="/")
+    if claims:
+        await account_service.end_session(session, claims.session_id)
+    clear_cookie(response)
+
+
+@router.post("/auth/logout-everywhere", status_code=204)
+async def logout_everywhere(response: Response, auth: AuthDep, session: SessionDep) -> None:
+    await account_service.end_all_sessions(session, auth.user.id)
+    clear_cookie(response)
 
 
 @router.post("/me/password", status_code=204, dependencies=[LoginLimit])
-async def change_password(
-    body: PasswordChange, response: Response, user: UserDep, session: SessionDep, settings: SettingsDep
-) -> None:
+async def change_password(body: PasswordChange, auth: AuthDep, session: SessionDep) -> None:
+    user = auth.user
     if not verify_password(body.current_password, user.password_hash):
         raise AppError(400, "invalid_credentials", "Your current password is incorrect.")
     user.password_hash = hash_password(body.new_password)
-    # Ends every other session, and keeps this one logged in.
-    user.session_version += 1
     await session.commit()
-    set_session_cookie(response, user, settings)
+    # Ends every other session and keeps this one logged in.
+    await account_service.end_all_sessions(session, user.id, keep=auth.session_id)
+
+
+@router.delete("/me", status_code=204, dependencies=[LoginLimit])
+async def delete_account(
+    body: AccountDeletion,
+    response: Response,
+    user: UserDep,
+    session: SessionDep,
+    store: StoreDep,
+    providers: ProvidersDep,
+) -> None:
+    if not verify_password(body.password, user.password_hash):
+        raise AppError(400, "invalid_credentials", "Your password is incorrect.")
+    has_cloned_voice = await session.scalar(
+        select(VoiceProfile.id).where(VoiceProfile.user_id == user.id, VoiceProfile.provider_voice_id.is_not(None)).limit(1)
+    )
+    voice = providers.voice() if has_cloned_voice else None
+    await account_service.delete_account(session, voice, store, user)
+    clear_cookie(response)
 
 
 @router.get("/me", response_model=UserOut)

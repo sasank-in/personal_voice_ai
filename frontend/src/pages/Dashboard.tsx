@@ -1,84 +1,108 @@
-import { useEffect, useState } from 'react'
-import { ApiError, api } from '../services/api'
-import { pickVoice } from '../services/selectedVoice'
-import type { Conversation, VoiceProfile } from '../types'
+import { Alert } from '../components/Alert'
+import { ChatIcon, MicIcon, PlusIcon, SpeakerIcon } from '../components/Icons'
+import type { Conversation, User, VoiceProfile } from '../types'
 
-export function Dashboard({ navigate }: { navigate: (path: string) => void }) {
-  const [voices, setVoices] = useState<VoiceProfile[] | null>(null)
-  const [conversations, setConversations] = useState<Conversation[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
+interface Props {
+  user: User
+  voice: VoiceProfile | null
+  voicesLoaded: boolean
+  conversations: Conversation[] | null
+  loadError: string | null
+  onNewConversation: () => void
+}
 
-  useEffect(() => {
-    Promise.all([api.listVoices(), api.listConversations()])
-      .then(([voiceList, conversationList]) => {
-        setVoices(voiceList)
-        setConversations(conversationList)
-      })
-      .catch((caught) => setError(caught instanceof ApiError ? caught.message : 'Could not load your data.'))
-  }, [])
+const STEPS = [
+  { icon: MicIcon, title: 'Record your voice', text: 'Read a short passage for 10 to 15 seconds.' },
+  { icon: ChatIcon, title: 'Ask anything', text: 'Type, or press the microphone and speak.' },
+  { icon: SpeakerIcon, title: 'Hear it in your voice', text: 'Every reply is spoken back in your cloned voice.' },
+]
 
-  async function startConversation() {
-    try {
-      const conversation = await api.createConversation()
-      navigate(`/conversation/${conversation.id}`)
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : 'Could not start a conversation.')
-    }
-  }
+function formatDate(value: string): string {
+  return new Date(value).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+}
 
-  async function removeConversation(id: string) {
-    if (!window.confirm('Delete this conversation and its audio? This cannot be undone.')) return
-    try {
-      await api.deleteConversation(id)
-      setConversations((current) => current?.filter((c) => c.id !== id) ?? null)
-    } catch (caught) {
-      setError(caught instanceof ApiError ? caught.message : 'Could not delete that conversation.')
-    }
-  }
-
-  const voice = voices ? pickVoice(voices) : null
+export function Dashboard({ user, voice, voicesLoaded, conversations, loadError, onNewConversation }: Props) {
+  const name = user.email.split('@')[0]
+  const recent = conversations?.slice(0, 5) ?? []
 
   return (
-    <div className="stack">
-      {error && <p className="error" role="alert">{error}</p>}
-      <section className="card stack">
-        <h2>Voice profile</h2>
-        {voices === null ? (
-          <p className="hint">Loading…</p>
-        ) : voice ? (
-          <p>Replies will use <strong>{voice.name}</strong>.</p>
-        ) : (
-          <p>You don't have a voice profile yet. Replies will be text only until you create one.</p>
-        )}
+    <div className="stack-lg">
+      <header className="page-header">
         <div>
-          <button type="button" className={voice ? 'button' : 'button primary'} onClick={() => navigate('/enroll')}>
-            Create voice profile
-          </button>
+          <h1 className="page-title">Welcome, {name}</h1>
+          <p className="page-subtitle">Talk with your assistant, and hear it answer in your own voice.</p>
         </div>
-      </section>
+        <button type="button" className="button button-primary" onClick={onNewConversation}>
+          <PlusIcon size={16} />
+          New conversation
+        </button>
+      </header>
 
-      <section className="card stack">
-        <div className="row-between">
-          <h2>Conversations</h2>
-          <button type="button" className="button primary" onClick={startConversation}>New conversation</button>
-        </div>
-        {conversations === null ? (
-          <p className="hint">Loading…</p>
-        ) : conversations.length === 0 ? (
-          <p className="hint">No conversations yet.</p>
-        ) : (
-          <ul className="list">
-            {conversations.map((conversation) => (
-              <li key={conversation.id} className="row-between">
-                <a href={`#/conversation/${conversation.id}`}>{conversation.title}</a>
-                <button type="button" className="button subtle" onClick={() => removeConversation(conversation.id)}>
-                  Delete
-                </button>
+      {loadError && <Alert tone="error">{loadError}</Alert>}
+
+      <div className="grid-2">
+        <section className="card">
+          <div className="card-icon"><MicIcon size={20} /></div>
+          <h2 className="card-title">Your voice</h2>
+          {!voicesLoaded ? (
+            <p className="muted">Loading…</p>
+          ) : voice ? (
+            <>
+              <p className="muted">
+                Replies are spoken as <strong className="text-strong">{voice.name}</strong>.
+              </p>
+              <div className="card-actions">
+                <span className="badge badge-success">Ready</span>
+                <a className="button button-secondary button-small" href="#/settings">Manage</a>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="muted">Record a short sample to hear replies in your own voice. Until then, replies are text only.</p>
+              <div className="card-actions">
+                <a className="button button-primary button-small" href="#/enroll">Create your voice</a>
+              </div>
+            </>
+          )}
+        </section>
+
+        <section className="card">
+          <div className="card-icon"><ChatIcon size={20} /></div>
+          <h2 className="card-title">Recent conversations</h2>
+          {conversations === null ? (
+            <p className="muted">Loading…</p>
+          ) : recent.length === 0 ? (
+            <p className="muted">No conversations yet. Start one to begin.</p>
+          ) : (
+            <ul className="recent-list">
+              {recent.map((conversation) => (
+                <li key={conversation.id}>
+                  <a href={`#/conversation/${conversation.id}`}>
+                    <span className="recent-title">{conversation.title}</span>
+                    <span className="recent-date">{formatDate(conversation.updated_at)}</span>
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      </div>
+
+      {voicesLoaded && !voice && (
+        <section>
+          <h2 className="section-title">How it works</h2>
+          <ol className="steps">
+            {STEPS.map(({ icon: StepIcon, title, text }, index) => (
+              <li key={title} className="step">
+                <span className="step-number">{index + 1}</span>
+                <StepIcon size={20} />
+                <h3>{title}</h3>
+                <p className="muted">{text}</p>
               </li>
             ))}
-          </ul>
-        )}
-      </section>
+          </ol>
+        </section>
+      )}
     </div>
   )
 }

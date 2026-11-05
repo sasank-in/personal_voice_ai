@@ -38,6 +38,7 @@ services:
       GROQ_API_KEY: ${GROQ_API_KEY:-}
       XAI_API_KEY: ${XAI_API_KEY:-}
       CORS_ORIGINS: https://${DOMAIN:?Set DOMAIN}
+      SIGNUP_ENABLED: ${SIGNUP_ENABLED:-true}
     volumes:
       - audio_data:/data/storage
     read_only: true

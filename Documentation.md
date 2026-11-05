@@ -19,7 +19,8 @@ Milestones 0 to 4 are built. These decisions differ from the plan below:
 - **Saving messages:** a turn's messages are saved after the LLM replies and before voice generation, so a failed LLM call leaves nothing to duplicate on retry.
 - **Speech-to-text:** Sarvam is the default. `STT_PROVIDER=groq` selects Groq Whisper as an alternative.
 - **Rate limits:** login, enrollment and conversation turns are limited in-process, ahead of Milestone 6.
-- **Sessions:** tokens carry a per-user version, so logging out or changing the password revokes them. This ends all of the user's sessions on logout. `POST /api/v1/me/password` changes the password.
+- **Accounts:** anyone can sign up, unless `SIGNUP_ENABLED=false`. Each logged-in device has a row in a `sessions` table. Logging out ends that device only, `POST /api/v1/auth/logout-everywhere` ends them all, and a password change ends every other device. `DELETE /api/v1/me` deletes the account, its data and its cloned voices at the provider.
+- **Speech language:** transcription, the reply and the cloned speech all use the user's language setting. Cloning is cross-lingual, so the voice sample's recorded language does not limit it.
 - **Request protection:** state-changing requests from an origin outside `CORS_ORIGINS` are refused, oversized or length-less bodies are refused before parsing, and API docs are hidden in production. In production, add the site's real origin to `CORS_ORIGINS`.
 - **Audio decoding:** uploads are decoded from temporary files that are deleted immediately, only from an allowed list of formats, and only up to a length limit.
 - **Reply length:** LLM replies are capped by `LLM_MAX_OUTPUT_TOKENS` (default 2048).

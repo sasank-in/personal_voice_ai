@@ -1,4 +1,5 @@
 import asyncio
+import shutil
 import uuid
 from pathlib import Path
 
@@ -21,3 +22,6 @@ class AudioStore:
 
     async def delete(self, object_key: str) -> None:
         await asyncio.to_thread(self.path_for(object_key).unlink, missing_ok=True)
+
+    async def delete_user_files(self, user_id: uuid.UUID) -> None:
+        await asyncio.to_thread(shutil.rmtree, self._root / str(user_id), ignore_errors=True)

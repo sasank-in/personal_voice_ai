@@ -1,8 +1,9 @@
-import { type FormEvent, useCallback, useEffect, useState } from 'react'
+import { type FormEvent, type KeyboardEvent, useCallback, useEffect, useState } from 'react'
+import { Alert } from '../components/Alert'
 import { AudioRecorder } from '../components/AudioRecorder'
 import { ChatWindow } from '../components/ChatWindow'
+import { SendIcon } from '../components/Icons'
 import { ApiError, api } from '../services/api'
-import { pickVoice } from '../services/selectedVoice'
 import type { Message, Turn, VoiceProfile } from '../types'
 
 type Phase = 'idle' | 'uploading' | 'processing' | 'playing'
@@ -16,14 +17,18 @@ const FAILED_STAGE: Record<string, string> = {
   generating_audio: 'Voice generation failed',
 }
 
-const PHASE_LABEL: Partial<Record<Phase, string>> = {
-  uploading: 'Uploading your recording…',
-  processing: 'Working on a reply…',
-}
-
 interface Failure {
   message: string
   retry?: () => void
+}
+
+interface Props {
+  conversationId: string
+  title: string
+  userInitial: string
+  voice: VoiceProfile | null
+  voicesLoaded: boolean
+  onChanged: () => void
 }
 
 function describe(caught: unknown): string {
@@ -32,24 +37,21 @@ function describe(caught: unknown): string {
   return stage ? `${stage}: ${caught.message}` : caught.message
 }
 
-export function ConversationPage({ conversationId }: { conversationId: string }) {
+export function ConversationPage({ conversationId, title, userInitial, voice, voicesLoaded, onChanged }: Props) {
   const [messages, setMessages] = useState<Message[]>([])
-  const [voice, setVoice] = useState<VoiceProfile | null>(null)
   const [draft, setDraft] = useState('')
   const [phase, setPhase] = useState<Phase>('idle')
   const [failure, setFailure] = useState<Failure | null>(null)
   const [loading, setLoading] = useState(true)
   const [autoPlayAudioId, setAutoPlayAudioId] = useState<string | null>(null)
   const [audioErrors, setAudioErrors] = useState<Record<string, string>>({})
+  const [generatingId, setGeneratingId] = useState<string | null>(null)
 
   useEffect(() => {
     let active = true
-    Promise.all([api.listMessages(conversationId), api.listVoices()])
-      .then(([history, voices]) => {
-        if (!active) return
-        setMessages(history)
-        setVoice(pickVoice(voices))
-      })
+    api
+      .listMessages(conversationId)
+      .then((history) => active && setMessages(history))
       .catch((caught) => active && setFailure({ message: describe(caught) }))
       .finally(() => active && setLoading(false))
     return () => {
@@ -58,11 +60,7 @@ export function ConversationPage({ conversationId }: { conversationId: string })
   }, [conversationId])
 
   function applyTurn(turn: Turn) {
-    setMessages((current) => [
-      ...current,
-      turn.user_message,
-      { ...turn.assistant_message, audio: turn.audio },
-    ])
+    setMessages((current) => [...current, turn.user_message, { ...turn.assistant_message, audio: turn.audio }])
     if (turn.audio_error) {
       setAudioErrors((current) => ({ ...current, [turn.assistant_message.id]: turn.audio_error!.message }))
     }
@@ -72,6 +70,7 @@ export function ConversationPage({ conversationId }: { conversationId: string })
     } else {
       setPhase('idle')
     }
+    onChanged()
   }
 
   async function sendText(content: string) {
@@ -102,10 +101,10 @@ export function ConversationPage({ conversationId }: { conversationId: string })
     }
   }
 
-  async function retryAudio(messageId: string) {
+  async function generateAudio(messageId: string) {
     if (!voice) return
     setFailure(null)
-    setPhase('processing')
+    setGeneratingId(messageId)
     try {
       const audio = await api.retryAudio(conversationId, messageId, voice.id)
       setMessages((current) => current.map((m) => (m.id === messageId ? { ...m, audio } : m)))
@@ -113,8 +112,9 @@ export function ConversationPage({ conversationId }: { conversationId: string })
       setAutoPlayAudioId(audio.id)
       setPhase('playing')
     } catch (caught) {
-      setPhase('idle')
-      setFailure({ message: describe(caught) })
+      setAudioErrors((current) => ({ ...current, [messageId]: caught instanceof ApiError ? caught.message : 'Something went wrong.' }))
+    } finally {
+      setGeneratingId(null)
     }
   }
 
@@ -122,62 +122,94 @@ export function ConversationPage({ conversationId }: { conversationId: string })
     setPhase((current) => (current === 'playing' ? 'idle' : current))
   }, [])
 
-  function submit(event: FormEvent) {
-    event.preventDefault()
+  function submit(event?: FormEvent) {
+    event?.preventDefault()
     const content = draft.trim()
-    if (content) void sendText(content)
+    if (content && !busy) void sendText(content)
+  }
+
+  function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+      event.preventDefault()
+      submit()
+    }
   }
 
   const busy = phase === 'uploading' || phase === 'processing'
+  const pending = phase === 'uploading' ? 'Uploading your recording…' : phase === 'processing' ? 'Thinking…' : null
 
   return (
-    <div className="conversation">
-      <p className="hint">
-        <a href="#/">← All conversations</a>
-        {' · '}
-        {voice ? `Replying in ${voice.name}` : 'Text replies only: no voice profile yet'}
-      </p>
-
-      {loading ? (
-        <p className="hint">Loading…</p>
-      ) : (
-        <ChatWindow
-          messages={messages}
-          autoPlayAudioId={autoPlayAudioId}
-          audioErrors={audioErrors}
-          canRetryAudio={voice !== null && !busy}
-          onRetryAudio={retryAudio}
-          onPlaybackEnded={finishPlayback}
-        />
-      )}
-
-      <div className="composer">
-        {PHASE_LABEL[phase] && <p className="status" role="status">{PHASE_LABEL[phase]}</p>}
-        {failure && (
-          <div className="inline-error" role="alert">
-            <p className="error">{failure.message}</p>
-            {failure.retry && (
-              <button type="button" className="button" onClick={failure.retry}>Try again</button>
-            )}
-          </div>
+    <div className="chat">
+      <header className="chat-header">
+        <h1 className="chat-title" title={title}>{title}</h1>
+        {voicesLoaded && (
+          <span className={`chip${voice ? ' chip-success' : ''}`}>
+            <span className={`status-dot${voice ? ' is-ready' : ''}`} aria-hidden="true" />
+            {voice ? `Replying as ${voice.name}` : 'Text replies only'}
+          </span>
         )}
-        <form className="composer-row" onSubmit={submit}>
-          <input
-            aria-label="Message"
-            placeholder="Type a message"
-            value={draft}
-            maxLength={8000}
-            disabled={busy}
-            onChange={(event) => setDraft(event.target.value)}
-          />
-          <button type="submit" className="button" disabled={busy || !draft.trim()}>Send</button>
-          <AudioRecorder
-            maxSeconds={MAX_UTTERANCE_SECONDS}
-            disabled={busy}
-            label="Speak"
-            onComplete={sendRecording}
-          />
-        </form>
+      </header>
+
+      <div className="chat-scroll">
+        <div className="chat-column">
+          {loading ? (
+            <div className="chat-loading"><span className="skeleton" /><span className="skeleton skeleton-short" /></div>
+          ) : (
+            <ChatWindow
+              messages={messages}
+              userInitial={userInitial}
+              pending={pending}
+              autoPlayAudioId={autoPlayAudioId}
+              audioErrors={audioErrors}
+              generatingId={generatingId}
+              canGenerateAudio={voice !== null && !busy && generatingId === null}
+              onGenerateAudio={generateAudio}
+              onPlaybackEnded={finishPlayback}
+              onSuggestion={setDraft}
+            />
+          )}
+        </div>
+      </div>
+
+      <div className="composer-wrap">
+        <div className="chat-column">
+          {failure && (
+            <Alert
+              tone="error"
+              action={failure.retry && (
+                <button type="button" className="button button-secondary button-small" onClick={failure.retry}>Try again</button>
+              )}
+            >
+              {failure.message}
+            </Alert>
+          )}
+          <form className="composer" onSubmit={submit}>
+            <textarea
+              className="composer-input"
+              aria-label="Message"
+              placeholder="Message your assistant…"
+              rows={1}
+              value={draft}
+              maxLength={8000}
+              disabled={busy}
+              onKeyDown={onKeyDown}
+              onChange={(event) => setDraft(event.target.value)}
+            />
+            <div className="composer-actions">
+              <AudioRecorder maxSeconds={MAX_UTTERANCE_SECONDS} disabled={busy} label="Speak" onComplete={sendRecording} />
+              <button
+                type="submit"
+                className="icon-button icon-button-primary"
+                aria-label="Send"
+                title="Send"
+                disabled={busy || !draft.trim()}
+              >
+                <SendIcon size={18} />
+              </button>
+            </div>
+          </form>
+          <p className="composer-note">Enter to send, Shift+Enter for a new line. Replies are AI-generated.</p>
+        </div>
       </div>
     </div>
   )

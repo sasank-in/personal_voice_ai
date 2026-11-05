@@ -1,3 +1,5 @@
+import uuid
+from dataclasses import dataclass
 from typing import Annotated
 
 from fastapi import Cookie, Depends, UploadFile
@@ -7,7 +9,7 @@ from app.core.config import Settings, get_settings
 from app.core.errors import AppError
 from app.core.security import read_session_token
 from app.db.session import get_session
-from app.models import User
+from app.models import User, UserSession
 from app.services.audio_store import AudioStore
 from app.services.providers.base import LLMProvider, SpeechToTextProvider, VoiceProvider
 from app.services.providers.factory import build_llm, build_stt, build_voice
@@ -39,16 +41,27 @@ def get_audio_store(settings: Annotated[Settings, Depends(get_settings)]) -> Aud
     return AudioStore(settings.storage_path)
 
 
-async def get_current_user(
+@dataclass(frozen=True)
+class Auth:
+    user: User
+    session_id: uuid.UUID
+
+
+async def get_auth(
     session: Annotated[AsyncSession, Depends(get_session)],
     settings: Annotated[Settings, Depends(get_settings)],
     token: Annotated[str | None, Cookie(alias=SESSION_COOKIE)] = None,
-) -> User:
+) -> Auth:
     claims = read_session_token(token, settings.session_secret) if token else None
-    user = await session.get(User, claims.user_id) if claims else None
-    if user is None or user.session_version != claims.version:
+    row = await session.get(UserSession, claims.session_id) if claims else None
+    user = await session.get(User, row.user_id) if row else None
+    if user is None:
         raise AppError(401, "not_authenticated", "Please log in.")
-    return user
+    return Auth(user, row.id)
+
+
+async def get_current_user(auth: Annotated[Auth, Depends(get_auth)]) -> User:
+    return auth.user
 
 
 async def read_upload(file: UploadFile, settings: Settings) -> bytes:
@@ -66,5 +79,6 @@ async def read_upload(file: UploadFile, settings: Settings) -> bytes:
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
 SettingsDep = Annotated[Settings, Depends(get_settings)]
 UserDep = Annotated[User, Depends(get_current_user)]
+AuthDep = Annotated[Auth, Depends(get_auth)]
 ProvidersDep = Annotated[Providers, Depends(get_providers)]
 StoreDep = Annotated[AudioStore, Depends(get_audio_store)]

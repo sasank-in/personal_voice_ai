@@ -12,7 +12,7 @@ from app.core.errors import AppError, not_found
 from app.db.base import utc_now
 from app.models import AudioAsset, Conversation, Message, User, VoiceProfile
 from app.services.audio_store import AudioStore
-from app.services.languages import VOICE_LANGUAGES
+from app.services.languages import VOICE_LANGUAGES, supported_language
 from app.services.providers.base import (
     LLMProvider,
     ProviderError,
@@ -174,7 +174,7 @@ class ConversationEngine:
         transcription = await self._usage_for(user).track(
             self._settings.stt_provider,
             "transcribe",
-            lambda: self._stt().transcribe(wav, "utterance.wav", user.language),
+            lambda: self._stt().transcribe(wav, "utterance.wav", supported_language(user.language)),
             model=self._settings.resolved_stt_model,
             audio_seconds=wav_duration_seconds(wav),
         )
@@ -211,7 +211,7 @@ class ConversationEngine:
         messages = [{"role": m.role, "content": m.content} for m in history[-HISTORY_MESSAGES:]]
         messages.append({"role": "user", "content": content})
 
-        language = VOICE_LANGUAGES.get(user.language, "English")
+        language = VOICE_LANGUAGES[supported_language(user.language)]
         generated = await self._usage_for(user).track(
             self._settings.llm_provider,
             "generate",
@@ -258,7 +258,9 @@ class ConversationEngine:
                 return await usage.measure(
                     profile.provider,
                     "clone",
-                    lambda: voice.synthesize(profile.provider_voice_id, chunk, profile.language),
+                    # The language of the text being spoken, which is the reply language. Cloning is
+                    # cross-lingual, so it need not match the language the sample was recorded in.
+                    lambda: voice.synthesize(profile.provider_voice_id, chunk, supported_language(user.language)),
                     input_characters=len(chunk),
                 )
 

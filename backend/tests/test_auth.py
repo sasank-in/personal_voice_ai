@@ -1,22 +1,54 @@
+import time
 import uuid
 
+from app.core.config import get_settings
 from app.core.security import create_session_token, read_session_token, verify_password
+from app.main import app
+
+
+def future(seconds: int = 3600) -> int:
+    return int(time.time()) + seconds
 
 
 def test_session_token_round_trip():
-    user_id = uuid.uuid4()
-    claims = read_session_token(create_session_token(user_id, 3, "secret", 1), "secret")
-    assert (claims.user_id, claims.version) == (user_id, 3)
+    session_id = uuid.uuid4()
+    claims = read_session_token(create_session_token(session_id, future(), "secret"), "secret")
+    assert claims.session_id == session_id
 
 
 def test_session_token_rejects_tampering_wrong_secret_and_expiry():
-    user_id = uuid.uuid4()
-    token = create_session_token(user_id, 0, "secret", 1)
+    session_id = uuid.uuid4()
+    token = create_session_token(session_id, future(), "secret")
     assert read_session_token(token, "other") is None
     assert read_session_token(f"{uuid.uuid4()}{token[36:]}", "secret") is None
     assert read_session_token("garbage", "secret") is None
-    assert read_session_token("a.b.c.é", "secret") is None
-    assert read_session_token(create_session_token(user_id, 0, "secret", -1), "secret") is None
+    assert read_session_token("a.b.é", "secret") is None
+    assert read_session_token(create_session_token(session_id, future(-1), "secret"), "secret") is None
+
+
+def test_unrecognized_stored_hash_is_a_failed_login_not_a_crash():
+    assert verify_password("anything", "not-a-real-hash-format") is False
+
+
+async def test_logout_ends_only_this_device(client, anonymous_client):
+    await anonymous_client.post("/api/v1/auth/login", json={"email": "owner@example.com", "password": "correct-horse"})
+    assert (await client.post("/api/v1/auth/logout")).status_code == 204
+    assert (await client.get("/api/v1/me")).status_code == 401
+    assert (await anonymous_client.get("/api/v1/me")).status_code == 200
+
+
+async def test_logout_everywhere_ends_every_device(client, anonymous_client):
+    await anonymous_client.post("/api/v1/auth/login", json={"email": "owner@example.com", "password": "correct-horse"})
+    assert (await client.post("/api/v1/auth/logout-everywhere")).status_code == 204
+    assert (await client.get("/api/v1/me")).status_code == 401
+    assert (await anonymous_client.get("/api/v1/me")).status_code == 401
+
+
+async def test_auth_options_report_whether_signup_is_on(anonymous_client):
+    assert (await anonymous_client.get("/api/v1/auth/options")).json() == {"signup_enabled": True}
+    settings = get_settings().model_copy(update={"signup_enabled": False})
+    app.dependency_overrides[get_settings] = lambda: settings
+    assert (await anonymous_client.get("/api/v1/auth/options")).json() == {"signup_enabled": False}
 
 
 async def test_crafted_non_ascii_cookie_is_a_401_not_a_crash(users, anonymous_client):
@@ -104,6 +136,16 @@ async def test_signup_rejects_duplicate_email_and_invalid_inputs(users, anonymou
         "/api/v1/auth/signup", json={"email": "not-an-email", "password": "a-secure-password"}
     )
     assert short_password.status_code == invalid_email.status_code == 422
+
+
+async def test_signup_can_be_turned_off(anonymous_client):
+    settings = get_settings().model_copy(update={"signup_enabled": False})
+    app.dependency_overrides[get_settings] = lambda: settings
+    response = await anonymous_client.post(
+        "/api/v1/auth/signup", json={"email": "new@example.com", "password": "a-secure-password"}
+    )
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "signup_disabled"
 
 
 async def test_protected_routes_require_login(anonymous_client):

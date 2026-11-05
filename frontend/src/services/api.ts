@@ -61,7 +61,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   const body: unknown = await response.json().catch(() => null)
   if (!response.ok) {
-    if (response.status === 401 && path !== '/auth/login') onUnauthorized()
+    if (response.status === 401 && !path.startsWith('/auth/')) onUnauthorized()
     throw toApiError(response.status, body)
   }
   return body as T
@@ -109,7 +109,13 @@ export function recordingFilename(blob: Blob): string {
 export const api = {
   login: (email: string, password: string) =>
     request<User>('/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) }),
+  signup: (email: string, password: string) =>
+    request<User>('/auth/signup', { method: 'POST', body: JSON.stringify({ email, password }) }),
+  authOptions: () => request<{ signup_enabled: boolean }>('/auth/options'),
   logout: () => request<void>('/auth/logout', { method: 'POST' }),
+  logoutEverywhere: () => request<void>('/auth/logout-everywhere', { method: 'POST' }),
+  deleteAccount: (password: string) =>
+    request<void>('/me', { method: 'DELETE', body: JSON.stringify({ password }) }),
   me: () => request<User>('/me'),
   updateLanguage: (language: string) =>
     request<User>('/me', { method: 'PATCH', body: JSON.stringify({ language }) }),

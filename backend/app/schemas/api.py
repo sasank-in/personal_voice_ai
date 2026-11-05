@@ -11,22 +11,31 @@ class LoginRequest(BaseModel):
     password: str = Field(max_length=1024)
 
 
+def normalize_email(email: str) -> str:
+    email = email.strip().lower()
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        raise ValueError("must be a valid email address")
+    return email
+
+
 class SignupRequest(BaseModel):
     email: str = Field(min_length=3, max_length=320)
     password: str = Field(min_length=8, max_length=1024)
 
-    @field_validator("email")
-    @classmethod
-    def normalize_email(cls, email: str) -> str:
-        email = email.strip().lower()
-        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
-            raise ValueError("must be a valid email address")
-        return email
+    _normalize_email = field_validator("email")(normalize_email)
 
 
 class PasswordChange(BaseModel):
     current_password: str = Field(max_length=1024)
     new_password: str = Field(min_length=8, max_length=1024)
+
+
+class AccountDeletion(BaseModel):
+    password: str = Field(max_length=1024)
+
+
+class AuthOptions(BaseModel):
+    signup_enabled: bool
 
 
 class UserOut(BaseModel):

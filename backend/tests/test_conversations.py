@@ -69,9 +69,11 @@ async def test_voice_failure_preserves_text_and_can_be_retried(client, conversat
     assert history[1]["audio"]["id"] == retry.json()["id"]
 
 
-async def test_retry_audio_uses_voice_profile_language(client, conversation, profile, providers):
+async def test_speech_uses_the_reply_language_not_the_sample_language(client, conversation, profile, providers):
+    # The voice was recorded in English, but replies are in Telugu: the text being spoken is Telugu.
     await client.patch("/api/v1/me", json={"language": "te-IN"})
     message = (await send(client, conversation, generate_audio=False)).json()["assistant_message"]
+    assert "Reply in Telugu." in providers.llm_calls[-1][0]
 
     retry = await client.post(
         f"/api/v1/conversations/{conversation['id']}/messages/{message['id']}/audio",
@@ -79,7 +81,7 @@ async def test_retry_audio_uses_voice_profile_language(client, conversation, pro
     )
 
     assert retry.status_code == 200
-    assert providers.synthesized[-1][2] == "en-IN"
+    assert providers.synthesized[-1][2] == "te-IN"
 
 
 async def test_llm_failure_saves_nothing_so_retry_cannot_duplicate(client, conversation, providers):
@@ -192,3 +194,27 @@ async def test_deleting_all_audio_keeps_the_text(client, conversation, profile, 
     assert list(storage.rglob("*.wav")) == []
     history = (await client.get(f"/api/v1/conversations/{conversation['id']}/messages")).json()
     assert len(history) == 2 and history[1]["audio"] is None
+
+
+def test_unsupported_stored_language_falls_back_to_a_provider_code():
+    from app.services.languages import supported_language
+
+    assert supported_language("te-IN") == "te-IN"
+    assert supported_language("en") == "en-IN"
+    assert supported_language("HI") == "hi-IN"
+    assert supported_language("fr-FR") == "en-IN"
+    assert supported_language(None) == "en-IN"
+
+
+async def test_an_invalid_language_cannot_be_stored(session_factory, users):
+    import pytest
+    from sqlalchemy import select
+    from sqlalchemy.exc import IntegrityError
+
+    from app.models import User
+
+    async with session_factory() as session:
+        user = await session.scalar(select(User).where(User.email == "owner@example.com"))
+        user.language = "en"
+        with pytest.raises(IntegrityError):
+            await session.commit()

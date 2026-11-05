@@ -11,10 +11,9 @@ conda activate environ
 cd backend
 pip install -r requirements-dev.txt
 alembic upgrade head
-python -m app.seed --email you@example.com
 ```
 
-The last command prompts for the password you will log in with.
+Create your account on the app's **Create an account** page. To create or reset an account from the command line instead, run `python -m app.seed --email you@example.com`, which prompts for the password.
 
 ```powershell
 cd ..\frontend
@@ -103,7 +102,7 @@ Publishing images works without any setup. Deployment stays off until you do the
 | Variable | `DEPLOY_URL` | For example `https://voice.example.com` |
 
 5. Add a repository variable `DEPLOY_ENABLED` set to `true`.
-6. After the first deployment, create your login on the server:
+6. After the first deployment, create your account on the site's **Create an account** page. Anyone who can reach the site can do the same, and every account spends your provider credits. Unless you want public sign-up, set `SIGNUP_ENABLED=false` in `.env.production` and deploy again. To add or reset accounts after that:
 
 ```bash
 cd /opt/voice-ai
