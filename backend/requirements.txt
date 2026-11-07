@@ -7,7 +7,7 @@ asyncpg==0.32.0
 alembic==1.20.1
 python-multipart==0.0.32
 httpx==0.28.1
-openai==3.42.0
+openai==3.45.0
 sarvamai==0.1.41
 pwdlib[argon2]==0.3.1
 imageio-ffmpeg==0.7.0
